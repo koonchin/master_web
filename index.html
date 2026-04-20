@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#1e293b">
+  <title>PO Tracking — Muslin Pajamas</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- ========== SIDEBAR ========== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo-icon">📦</div>
+      <div>
+        <h1>PO Tracking</h1>
+        <p>Muslin Pajamas</p>
+      </div>
+      <button class="sidebar-close-btn" onclick="closeSidebar()" aria-label="Close menu">✕</button>
+    </div>
+
+    <div class="sidebar-role">
+      <label>บทบาทของคุณ</label>
+      <div class="role-btn-group">
+        <button class="role-btn active" data-role="purchase" onclick="setRole('purchase')">🛒 จัดซื้อ</button>
+        <button class="role-btn"        data-role="warehouse" onclick="setRole('warehouse')">🏭 คลัง</button>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div data-role-section="all">
+        <div class="nav-section-label">ภาพรวม</div>
+        <button class="nav-item" data-view="dashboard" onclick="navigate('dashboard');closeSidebar()">
+          <span class="icon">📊</span><span>Dashboard</span>
+        </button>
+      </div>
+
+      <div data-role-section="purchase">
+        <div class="nav-section-label">ทีมจัดซื้อ</div>
+        <button class="nav-item" data-view="po-list" onclick="navigate('po-list');closeSidebar()">
+          <span class="icon">📋</span><span>รายการ PO ทั้งหมด</span>
+          <span class="nav-badge" id="overdue-badge" style="display:none">0</span>
+        </button>
+        <button class="nav-item" data-view="create-po" onclick="navigate('create-po');closeSidebar()">
+          <span class="icon">➕</span><span>สร้าง PO ใหม่</span>
+        </button>
+      </div>
+
+      <div data-role-section="warehouse" style="display:none">
+        <div class="nav-section-label">ทีมคลังสินค้า</div>
+        <button class="nav-item" data-view="wh-search" onclick="navigate('wh-search');closeSidebar()">
+          <span class="icon">🔍</span><span>ค้นหา & รับสินค้า</span>
+        </button>
+      </div>
+    </nav>
+  </aside>
+
+  <!-- Sidebar backdrop (mobile) -->
+  <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()"></div>
+
+  <!-- ========== MAIN ========== -->
+  <div class="main-content">
+
+    <!-- Topbar (hamburger is always rendered here; page scripts fill #topbar-content) -->
+    <div class="topbar" id="topbar">
+      <button class="hamburger-btn" id="hamburger-btn" onclick="openSidebar()" aria-label="Open menu">☰</button>
+      <div id="topbar-inner" style="display:contents"></div>
+    </div>
+
+    <!-- Page content -->
+    <div class="page-body" id="page-body"></div>
+
+  </div>
+</div>
+
+<!-- ========== MOBILE BOTTOM NAV ========== -->
+<nav class="mobile-bottom-nav" id="mobile-bottom-nav">
+  <div class="mobile-nav-items" id="mobile-nav-items">
+    <!-- rendered by JS based on role -->
+  </div>
+</nav>
+
+<!-- ========== MODALS ========== -->
+
+<!-- Edit Status Modal -->
+<div class="modal-overlay" id="edit-status-modal" style="display:none" onclick="if(event.target===this)hideModal('edit-status-modal')">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>✏ อัปเดตสถานะ — <span id="modal-po-number"></span></h3>
+      <button class="modal-close" onclick="hideModal('edit-status-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>สถานะใหม่</label>
+          <select class="form-control" id="edit-status" onchange="toggleDepartureField()">
+            <option value="Draft">📝 Draft</option>
+            <option value="Ordered">📋 Ordered</option>
+            <option value="Shipped_CN">🚢 Shipped from China</option>
+            <option value="Thai_Customs">🛃 Thai Customs</option>
+            <option value="Arrived">📦 Arrived</option>
+            <option value="Completed">✅ Completed</option>
+          </select>
+        </div>
+        <div class="form-group" id="departure-row">
+          <label>Departure Date (วันออกจากจีน)</label>
+          <input class="form-control" type="date" id="edit-departure">
+          <span class="hint">ระบุวันที่ของออกจากจีน เพื่อคำนวณ ETA</span>
+        </div>
+        <div class="form-group">
+          <label>บริษัทขนส่ง</label>
+          <select class="form-control" id="edit-logistics-company">
+            <option value="">-- ไม่ระบุ --</option>
+            <option value="HLT">HLT</option>
+            <option value="CTW">CTW</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>วิธีขนส่ง</label>
+          <select class="form-control" id="edit-shipping-method" onchange="autoLeadTime('edit-leadtime')">
+            <option value="">-- ไม่ระบุ --</option>
+            <option value="รถ">🚛 รถ (ETA ~7 วัน)</option>
+            <option value="เรือ">🚢 เรือ (ETA ~30 วัน)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Est. Lead Time (วัน)</label>
+          <input class="form-control" type="number" id="edit-leadtime" min="1" max="365">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="hideModal('edit-status-modal')">ยกเลิก</button>
+      <button class="btn-primary" onclick="saveStatusUpdate()">💾 บันทึก</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete PO Confirm Modal -->
+<div class="modal-overlay" id="delete-po-modal" style="display:none" onclick="if(event.target===this)hideModal('delete-po-modal')">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-header">
+      <h3>🗑 ลบ PO</h3>
+      <button class="modal-close" onclick="hideModal('delete-po-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="alert alert-red" style="margin-bottom:16px">
+        <span class="alert-icon">⚠️</span>
+        <div class="alert-body">
+          <div class="alert-title">ไม่สามารถกู้คืนได้!</div>
+          <p>การลบจะลบข้อมูลทั้งหมดที่เกี่ยวข้องออกจากฐานข้อมูลถาวร</p>
+        </div>
+      </div>
+      <p style="font-size:14px;color:#374151;margin-bottom:8px">คุณต้องการลบ PO นี้ใช่หรือไม่?</p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px">
+        <div style="font-size:13px;color:#64748b;margin-bottom:4px">PO Number</div>
+        <div class="po-number-tag" id="delete-po-number" style="font-size:16px"></div>
+        <div style="font-size:13px;color:#64748b;margin-top:10px;margin-bottom:4px">รายการที่จะถูกลบ</div>
+        <div id="delete-po-summary" style="font-size:14px;color:#374151"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="hideModal('delete-po-modal')">ยกเลิก</button>
+      <button class="btn-primary" id="confirm-delete-btn" style="background:#ef4444;border-color:#ef4444" onclick="confirmDeletePO()">
+        🗑 ยืนยันการลบ
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit Item Modal -->
+<div class="modal-overlay" id="edit-item-modal" style="display:none" onclick="if(event.target===this)hideModal('edit-item-modal')">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>✏ แก้ไข SKU</h3>
+      <button class="modal-close" onclick="hideModal('edit-item-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="edit-item-id">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>SKU <span style="color:#ef4444">*</span></label>
+          <input class="form-control" id="edit-item-sku" placeholder="เช่น MP-BJM-001-S">
+        </div>
+        <div class="form-group">
+          <label>Order QTY <span style="color:#ef4444">*</span></label>
+          <input class="form-control" id="edit-item-qty" type="number" placeholder="0" min="1">
+        </div>
+        <div class="form-group">
+          <label>หมายเหตุ (จัดซื้อ)</label>
+          <textarea class="form-control" id="edit-item-remark" placeholder="หมายเหตุเพิ่มเติม (ถ้ามี)"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="hideModal('edit-item-modal')">ยกเลิก</button>
+      <button class="btn-primary" onclick="saveEditItem()">💾 บันทึก</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Item Modal -->
+<div class="modal-overlay" id="add-item-modal" style="display:none" onclick="if(event.target===this)hideModal('add-item-modal')">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>➕ เพิ่ม SKU — <span id="add-item-po"></span></h3>
+      <button class="modal-close" onclick="hideModal('add-item-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="form-group">
+          <label>SKU <span style="color:#ef4444">*</span></label>
+          <input class="form-control" id="new-sku" placeholder="เช่น MP-BJM-001-S">
+        </div>
+        <div class="form-group">
+          <label>Order QTY <span style="color:#ef4444">*</span></label>
+          <input class="form-control" id="new-qty" type="number" placeholder="0" min="1">
+        </div>
+        <div class="form-group">
+          <label>หมายเหตุ (จัดซื้อ)</label>
+          <textarea class="form-control" id="new-remark" placeholder="หมายเหตุเพิ่มเติม (ถ้ามี)"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="hideModal('add-item-modal')">ยกเลิก</button>
+      <button class="btn-primary" onclick="saveNewItem()">➕ เพิ่ม SKU</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast Container -->
+<div id="toast-container"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
