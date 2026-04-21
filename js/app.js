@@ -3,7 +3,7 @@
 // API-backed version (Node.js + MySQL)
 // ============================================================
 
-// const API_BASE = 'http://localhost:4002/api';
+// const API_BASE = 'http://localhost:3000/api';
 const API_BASE = '/api';
 
 // --- State ---
@@ -11,7 +11,7 @@ let currentRole = 'purchase';
 let currentView = 'dashboard';
 let editingPO = null;    // full PO object with items + logs
 let receivingPO = null;
-let dashFilter = { year: '', month: '', logistics_company: '', shipping_method: '' };
+let dashFilter = { dateField: 'order_date', year: '', month: '', logistics_company: '', shipping_method: '' };
 
 // --- API Layer ---
 const API = {
@@ -148,7 +148,7 @@ async function renderView(view) {
     switch (view) {
       case 'dashboard':  await renderDashboard(body, topbar); break;
       case 'po-list':    await renderPOList(body, topbar); break;
-      case 'create-po':  renderCreatePO(body, topbar); break;
+      case 'create-po':  await renderCreatePO(body, topbar); break;
       case 'po-detail':  await renderPODetail(body, topbar); break;
       case 'wh-search':  await renderWHSearch(body, topbar); break;
       case 'wh-receive': await renderWHReceive(body, topbar); break;
@@ -177,23 +177,32 @@ async function updateNavBadges() {
 // DASHBOARD
 // ============================================================
 function dashFilterChanged() {
-  dashFilter.year              = document.getElementById('dash-year')?.value     || '';
-  dashFilter.month             = document.getElementById('dash-month')?.value    || '';
+  dashFilter.dateField         = document.getElementById('dash-datefield')?.value || 'order_date';
+  dashFilter.year              = document.getElementById('dash-year')?.value      || '';
+  dashFilter.month             = document.getElementById('dash-month')?.value     || '';
   dashFilter.logistics_company = document.getElementById('dash-logistics')?.value || '';
-  dashFilter.shipping_method   = document.getElementById('dash-method')?.value   || '';
+  dashFilter.shipping_method   = document.getElementById('dash-method')?.value    || '';
   renderView('dashboard');
 }
 function clearDashFilter() {
-  dashFilter = { year: '', month: '', logistics_company: '', shipping_method: '' };
+  dashFilter = { dateField: 'order_date', year: '', month: '', logistics_company: '', shipping_method: '' };
   renderView('dashboard');
 }
 function exportDashboard() {
   const p = new URLSearchParams();
+  p.set('date_field', dashFilter.dateField || 'order_date');
   if (dashFilter.year)              p.set('year',              dashFilter.year);
   if (dashFilter.month)             p.set('month',             dashFilter.month);
   if (dashFilter.logistics_company) p.set('logistics_company', dashFilter.logistics_company);
   if (dashFilter.shipping_method)   p.set('shipping_method',   dashFilter.shipping_method);
   window.location.href = `${API_BASE}/export?${p.toString()}`;
+}
+
+// Get the date to filter on per-PO depending on dateField setting
+function getFilterDate(po) {
+  if (dashFilter.dateField === 'departure_date') return po.departure_date || null;
+  if (dashFilter.dateField === 'eta')            return getETA(po);
+  return po.order_date || null;  // default: order_date
 }
 
 async function renderDashboard(body, topbar) {
@@ -213,11 +222,18 @@ async function renderDashboard(body, topbar) {
     ...Array.from({length:12}, (_,i) => `<option value="${i+1}" ${dashFilter.month == i+1 ? 'selected' : ''}>${i+1} — ${monthNames[i]}</option>`)
   ].join('');
 
+  const dateFieldOpts = [
+    { v: 'order_date',     l: '📋 วันที่สั่ง (Order Date)' },
+    { v: 'departure_date', l: '✈️ วันส่งออก (Departure)' },
+    { v: 'eta',            l: '📦 วันถึง (ETA)' },
+  ].map(o => `<option value="${o.v}" ${dashFilter.dateField === o.v ? 'selected' : ''}>${o.l}</option>`).join('');
+
   const hasFilter = dashFilter.year || dashFilter.month || dashFilter.logistics_company || dashFilter.shipping_method;
   const filterBar = `
     <div class="card" style="padding:14px 20px;margin-bottom:20px">
       <div class="filter-row" style="flex-wrap:wrap;gap:10px;align-items:center">
         <span style="font-size:13px;font-weight:600;color:#374151">🔽 ตัวกรอง</span>
+        <select class="form-control" style="width:210px" id="dash-datefield" onchange="dashFilterChanged()">${dateFieldOpts}</select>
         <select class="form-control" style="width:110px" id="dash-year" onchange="dashFilterChanged()">${yearOpts}</select>
         <select class="form-control" style="width:155px" id="dash-month" onchange="dashFilterChanged()">${monthOpts}</select>
         <select class="form-control" style="width:155px" id="dash-logistics" onchange="dashFilterChanged()">
@@ -239,10 +255,15 @@ async function renderDashboard(body, topbar) {
 
   // Apply filters to headers
   let filtered = [...headers];
-  if (dashFilter.year)  filtered = filtered.filter(p => p.order_date && p.order_date.startsWith(dashFilter.year));
-  if (dashFilter.month) {
-    const m = String(dashFilter.month).padStart(2, '0');
-    filtered = filtered.filter(p => p.order_date && p.order_date.substring(5, 7) === m);
+  if (dashFilter.year || dashFilter.month) {
+    const m = dashFilter.month ? String(dashFilter.month).padStart(2, '0') : '';
+    filtered = filtered.filter(p => {
+      const d = getFilterDate(p);
+      if (!d) return false;
+      if (dashFilter.year  && !d.startsWith(dashFilter.year))         return false;
+      if (dashFilter.month && d.substring(5, 7) !== m)                 return false;
+      return true;
+    });
   }
   if (dashFilter.logistics_company) filtered = filtered.filter(p => p.logistics_company === dashFilter.logistics_company);
   if (dashFilter.shipping_method)   filtered = filtered.filter(p => p.shipping_method   === dashFilter.shipping_method);
@@ -554,13 +575,21 @@ async function renderPODetail(body, topbar) {
 // ============================================================
 // CREATE PO
 // ============================================================
-function renderCreatePO(body, topbar) {
+async function renderCreatePO(body, topbar) {
   topbar.innerHTML = `
     <div class="topbar-left"><h2>➕ สร้าง PO ใหม่</h2></div>
     <div class="topbar-right"><button class="btn-secondary" onclick="navigate('po-list')">ยกเลิก</button></div>`;
 
   const year = new Date().getFullYear();
   const suggestedPN = `PO-${year}-001`;
+
+  // Fetch existing project names for autocomplete datalist
+  let projectDatalist = '';
+  try {
+    const all = _allPOHeaders.length ? _allPOHeaders : await API.get('/po');
+    const uniqueProjects = [...new Set(all.map(p => p.project_name).filter(Boolean))].sort();
+    projectDatalist = `<datalist id="project-datalist">${uniqueProjects.map(p => `<option value="${p.replace(/"/g,'&quot;')}">`).join('')}</datalist>`;
+  } catch { /* autocomplete is optional */ }
 
   body.innerHTML = `
     <div class="card">
@@ -572,7 +601,8 @@ function renderCreatePO(body, topbar) {
         </div>
         <div class="form-group">
           <label>Project Name <span style="color:#ef4444">*</span></label>
-          <input class="form-control" id="f-project" placeholder="เช่น Muslin Pajamas Summer 2026">
+          <input class="form-control" id="f-project" placeholder="เช่น Muslin Pajamas Summer 2026" list="project-datalist" autocomplete="off">
+          ${projectDatalist}
         </div>
         <div class="form-group">
           <label>Order Date</label>

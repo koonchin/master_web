@@ -1,0 +1,15 @@
+# Environment variables (contains DB credentials)
+.env
+
+# Uploaded files
+uploads/
+
+# Node modules
+node_modules/
+
+# Claude Code internal files
+.claude/settings.local.json
+
+# OS files
+.DS_Store
+Thumbs.db

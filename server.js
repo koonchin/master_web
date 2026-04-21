@@ -295,14 +295,21 @@ app.post('/api/upload', upload.array('photos', 10), (req, res) => {
 // ============================================================
 app.get('/api/export', async (req, res) => {
   try {
-    const { year, month, logistics_company, shipping_method, status } = req.query;
+    const { year, month, logistics_company, shipping_method, status, date_field } = req.query;
     const conditions = [];
     const params = [];
-    if (year)              { conditions.push('YEAR(ph.order_date) = ?');   params.push(+year); }
-    if (month)             { conditions.push('MONTH(ph.order_date) = ?');  params.push(+month); }
-    if (logistics_company) { conditions.push('ph.logistics_company = ?');  params.push(logistics_company); }
-    if (shipping_method)   { conditions.push('ph.shipping_method = ?');    params.push(shipping_method); }
-    if (status)            { conditions.push('ph.status = ?');             params.push(status); }
+    // Resolve date column from date_field param (whitelist to prevent injection)
+    const dateColMap = {
+      order_date:     'ph.order_date',
+      departure_date: 'ph.departure_date',
+      eta:            'DATE_ADD(ph.departure_date, INTERVAL ph.est_lead_time DAY)',
+    };
+    const dateCol = dateColMap[date_field] || 'ph.order_date';
+    if (year)              { conditions.push(`YEAR(${dateCol}) = ?`);    params.push(+year); }
+    if (month)             { conditions.push(`MONTH(${dateCol}) = ?`);   params.push(+month); }
+    if (logistics_company) { conditions.push('ph.logistics_company = ?'); params.push(logistics_company); }
+    if (shipping_method)   { conditions.push('ph.shipping_method = ?');   params.push(shipping_method); }
+    if (status)            { conditions.push('ph.status = ?');            params.push(status); }
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
 
     const [rows] = await pool.query(`
