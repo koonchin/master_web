@@ -12,6 +12,8 @@ let currentView = 'dashboard';
 let editingPO = null;    // full PO object with items + logs
 let receivingPO = null;
 let dashFilter = { dateField: 'order_date', year: '', month: '', logistics_company: '', shipping_method: '' };
+let _itemMasterList = [];   // cache for Item_Master
+let _logisticsRates = [];   // cache for Logistics_Rates
 
 // --- API Layer ---
 const API = {
@@ -150,9 +152,11 @@ async function renderView(view) {
       case 'po-list':    await renderPOList(body, topbar); break;
       case 'create-po':  await renderCreatePO(body, topbar); break;
       case 'po-detail':  await renderPODetail(body, topbar); break;
-      case 'wh-search':  await renderWHSearch(body, topbar); break;
-      case 'wh-receive': await renderWHReceive(body, topbar); break;
-      default:           await renderDashboard(body, topbar);
+      case 'wh-search':       await renderWHSearch(body, topbar); break;
+      case 'wh-receive':      await renderWHReceive(body, topbar); break;
+      case 'item-master':     await renderItemMaster(body, topbar); break;
+      case 'logistics-rates': await renderLogisticsRates(body, topbar); break;
+      default:                await renderDashboard(body, topbar);
     }
   } catch (err) {
     body.innerHTML = `<div class="alert alert-red" style="margin:20px"><span class="alert-icon">❌</span><div class="alert-body"><div class="alert-title">เกิดข้อผิดพลาด</div><p>${err.message}</p></div></div>`;
@@ -509,12 +513,27 @@ async function renderPODetail(body, topbar) {
     </div>`;
   }).join('');
 
+  const isPurchase = currentRole === 'purchase';
   const itemRows = items.map(item => {
     const log = logs.find(l => l.sku === item.sku);
     const hasReceive = log && log.receive_qty > 0;
     const hasQC = qcDone(log);
+    const isMaterial = item.item_type === 'Material';
+
+    // SKU cell: for warehouse + material, show carton info prominently
+    const skuCell = (!isPurchase && isMaterial && item.shipping_cartons > 0)
+      ? `<div class="font-mono" style="font-weight:600">${item.sku}</div>
+         <div style="font-size:12px;color:#3b82f6;margin-top:2px">📦 ${item.shipping_cartons.toLocaleString()} ลัง</div>`
+      : `<span class="font-mono">${item.sku}</span>`;
+
+    // Purchase-only columns
+    const purchaseCols = isPurchase ? `
+      <td class="text-right text-sm td-muted">${isMaterial && item.shipping_cartons ? `${item.shipping_cartons} ลัง` : '-'}</td>
+      <td class="text-right text-sm td-muted">${item.estimated_weight ? `${item.estimated_weight} kg` : '-'}</td>
+      <td class="text-right text-sm" style="color:#059669">${item.shipping_cost ? `฿${(+item.shipping_cost).toLocaleString()}` : '-'}<br><span class="td-muted text-sm">${item.selected_logistics||''}</span></td>` : '';
+
     return `<tr>
-      <td class="font-mono">${item.sku}</td>
+      <td>${skuCell}</td>
       <td class="text-right">${item.order_qty.toLocaleString()}</td>
       <td class="text-right">${hasReceive ? log.receive_qty.toLocaleString() : '<span class="text-muted">-</span>'}</td>
       <td class="text-right">${hasReceive ? diffChip(item.order_qty, log.receive_qty) : '<span class="text-muted">-</span>'}</td>
@@ -522,6 +541,7 @@ async function renderPODetail(body, topbar) {
       <td class="text-right">${hasQC ? (log.not_pass_qc_qty > 0 ? `<span style="color:#dc2626;font-weight:600">${log.not_pass_qc_qty}</span>` : '<span style="color:#059669">0</span>') : '<span class="text-muted">-</span>'}</td>
       <td class="text-sm text-muted">${item.remark_purchase || ''}</td>
       <td class="text-sm text-muted">${log?.remark_warehouse || ''}</td>
+      ${purchaseCols}
     </tr>`;
   }).join('');
 
@@ -549,7 +569,7 @@ async function renderPODetail(body, topbar) {
       </div>
       <div class="table-wrap" style="border:none;border-top:1px solid #e2e8f0">
         <table>
-          <thead><tr><th>SKU</th><th style="text-align:right">Order QTY</th><th style="text-align:right">Receive QTY</th><th style="text-align:right">Check Diff</th><th style="text-align:right">Pass QC</th><th style="text-align:right">Not Pass</th><th>หมายเหตุจัดซื้อ</th><th>หมายเหตุคลัง</th></tr></thead>
+          <thead><tr><th>SKU</th><th style="text-align:right">Order QTY</th><th style="text-align:right">Receive QTY</th><th style="text-align:right">Check Diff</th><th style="text-align:right">Pass QC</th><th style="text-align:right">Not Pass</th><th>หมายเหตุจัดซื้อ</th><th>หมายเหตุคลัง</th>${isPurchase ? '<th style="text-align:right">ลัง</th><th style="text-align:right">น้ำหนัก</th><th style="text-align:right">ค่าขนส่ง</th>' : ''}</tr></thead>
           <tbody>${itemRows || `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📦</div><p>ยังไม่มีรายการสินค้า</p></div></td></tr>`}</tbody>
         </table>
       </div>
@@ -590,6 +610,9 @@ async function renderCreatePO(body, topbar) {
     const uniqueProjects = [...new Set(all.map(p => p.project_name).filter(Boolean))].sort();
     projectDatalist = `<datalist id="project-datalist">${uniqueProjects.map(p => `<option value="${p.replace(/"/g,'&quot;')}">`).join('')}</datalist>`;
   } catch { /* autocomplete is optional */ }
+
+  // Fetch Item Master for SKU autocomplete
+  try { _itemMasterList = await API.get('/item-master'); } catch { _itemMasterList = []; }
 
   body.innerHTML = `
     <div class="card">
@@ -632,17 +655,19 @@ async function renderCreatePO(body, topbar) {
     </div>
     <div class="card">
       <div class="card-header"><div class="card-title">📦 รายการสินค้า (SKU)</div><button class="btn-secondary btn-sm" onclick="addTempItem()">＋ เพิ่ม SKU</button></div>
+      <datalist id="sku-datalist">${_itemMasterList.map(it => `<option value="${it.item_id}">${it.item_name}</option>`).join('')}</datalist>
       <div class="items-table-wrap">
         <table>
-          <thead><tr><th style="width:40px">#</th><th>SKU</th><th style="width:140px">Order QTY</th><th>หมายเหตุ</th><th style="width:50px"></th></tr></thead>
+          <thead><tr><th style="width:30px">#</th><th>SKU</th><th style="width:130px">Order QTY</th><th>หมายเหตุ</th><th style="width:44px"></th></tr></thead>
           <tbody id="temp-items-body">
             <tr id="temp-item-0">
               <td class="td-muted">1</td>
-              <td><input class="form-control" placeholder="เช่น MP-BJM-001-S" style="border:none;padding:4px 0"></td>
-              <td><input class="form-control" type="number" placeholder="0" min="0" style="border:none;padding:4px 0" oninput="calcTotal()"></td>
+              <td><input class="form-control" list="sku-datalist" placeholder="เช่น MP-BJM-001-S" style="border:none;padding:4px 0" onchange="onSkuChange(this,0)" autocomplete="off"></td>
+              <td><input class="form-control" type="number" placeholder="0" min="0" style="border:none;padding:4px 0" oninput="calcTotal();onQtyChange(0)"></td>
               <td><input class="form-control" placeholder="หมายเหตุ" style="border:none;padding:4px 0"></td>
               <td></td>
             </tr>
+            <tr id="temp-item-0-info" style="display:none"><td></td><td colspan="4" id="temp-item-0-detail" style="padding:8px 0"></td></tr>
           </tbody>
         </table>
         <div class="add-item-row"><span class="text-sm text-muted">รวม: <strong id="total-qty">0</strong> ชิ้น จาก <strong id="total-sku">0</strong> SKU</span></div>
@@ -665,13 +690,92 @@ function addTempItem() {
   tr.id = `temp-item-${idx}`;
   tr.innerHTML = `
     <td class="td-muted">${idx + 1}</td>
-    <td><input class="form-control" placeholder="SKU" style="border:none;padding:4px 0"></td>
-    <td><input class="form-control" type="number" placeholder="0" min="0" style="border:none;padding:4px 0" oninput="calcTotal()"></td>
+    <td><input class="form-control" list="sku-datalist" placeholder="SKU" style="border:none;padding:4px 0" onchange="onSkuChange(this,${idx})" autocomplete="off"></td>
+    <td><input class="form-control" type="number" placeholder="0" min="0" style="border:none;padding:4px 0" oninput="calcTotal();onQtyChange(${idx})"></td>
     <td><input class="form-control" placeholder="หมายเหตุ" style="border:none;padding:4px 0"></td>
     <td><button style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:18px">✕</button></td>`;
-  tr.querySelector('button').onclick = () => { tr.remove(); calcTotal(); };
+  const infoTr = document.createElement('tr');
+  infoTr.id = `temp-item-${idx}-info`;
+  infoTr.style.display = 'none';
+  infoTr.innerHTML = `<td></td><td colspan="4" id="temp-item-${idx}-detail" style="padding:8px 0"></td>`;
+  tr.querySelector('button').onclick = () => { tr.remove(); infoTr.remove(); calcTotal(); };
   tbody.appendChild(tr);
+  tbody.appendChild(infoTr);
   calcTotal();
+}
+
+// SKU lookup + UOM calculation
+function onSkuChange(input, idx) {
+  const skuVal = input.value.trim();
+  const item = _itemMasterList.find(it => it.item_id === skuVal);
+  // Store item type on the row as data attribute
+  const row = document.getElementById(`temp-item-${idx}`);
+  if (row) row.dataset.itemType = item?.item_type || '';
+  if (row) row.dataset.itemSpec = item ? JSON.stringify(item) : '';
+  onQtyChange(idx);
+}
+
+async function onQtyChange(idx) {
+  const row = document.getElementById(`temp-item-${idx}`);
+  const infoRow = document.getElementById(`temp-item-${idx}-info`);
+  const detail = document.getElementById(`temp-item-${idx}-detail`);
+  if (!row || !infoRow || !detail) return;
+
+  const spec = row.dataset.itemSpec ? JSON.parse(row.dataset.itemSpec) : null;
+  const inputs = row.querySelectorAll('input');
+  const qty = parseInt(inputs[1]?.value || '0');
+
+  if (!spec || !qty) { infoRow.style.display = 'none'; return; }
+
+  infoRow.style.display = '';
+  if (spec.item_type === 'Material') {
+    const cartons = Math.ceil(qty / spec.qty_per_carton);
+    const weight  = +(cartons * spec.carton_weight).toFixed(2);
+    const volume  = +(cartons * spec.carton_volume).toFixed(4);
+    // Save computed values on row
+    row.dataset.cartons = cartons;
+    row.dataset.weight  = weight;
+    row.dataset.volume  = volume;
+
+    // Fetch logistics compare
+    let compareHtml = '<span class="text-muted text-sm">กำลังเปรียบเทียบราคา...</span>';
+    detail.innerHTML = `
+      <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 14px;font-size:13px">
+        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:8px">
+          <span>📦 <strong>${cartons.toLocaleString()}</strong> ลัง</span>
+          <span>🏋 <strong>${weight.toLocaleString()}</strong> kg</span>
+          <span>📐 <strong>${volume}</strong> CBM</span>
+        </div>
+        <div id="logistics-compare-${idx}">${compareHtml}</div>
+      </div>`;
+
+    try {
+      const results = await API.post('/logistics/compare', { weight, volume });
+      const sel = row.dataset.selectedLogistics || '';
+      const compareRows = results.map((r, i) => `
+        <label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;background:${i===0?'#ecfdf5':''}">
+          <input type="radio" name="logistics-${idx}" value="${r.company}|${r.method}|${r.cost}" ${sel === `${r.company}|${r.method}` ? 'checked' : ''}>
+          <span style="min-width:60px;font-weight:600">${r.company}</span>
+          <span style="min-width:60px;color:#64748b">${r.method}</span>
+          <span class="badge ${r.charge_type==='Weight'?'badge-ordered':'badge-shipped'}">${r.charge_type==='Weight'?'น้ำหนัก':'ปริมาตร'}</span>
+          <span style="margin-left:auto;font-weight:700;color:#059669">${r.cost.toLocaleString()} บาท</span>
+          ${i===0?'<span style="font-size:11px;color:#059669;font-weight:600">ถูกสุด</span>':''}
+        </label>`).join('');
+      document.getElementById(`logistics-compare-${idx}`).innerHTML =
+        `<div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:6px">🔀 เปรียบเทียบค่าขนส่ง</div>${compareRows}`;
+    } catch { /* ignore */ }
+
+  } else if (spec.item_type === 'Product') {
+    const weight = +(qty * spec.default_weight_per_pc).toFixed(2);
+    row.dataset.weight = weight;
+    detail.innerHTML = `
+      <div style="background:#fefce8;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:13px">
+        <span>🏋 น้ำหนักรวม (ประมาณ) <strong>${weight.toLocaleString()}</strong> kg</span>
+        <span class="text-muted text-sm" style="margin-left:12px">(${spec.default_weight_per_pc} kg × ${qty.toLocaleString()} ชิ้น)</span>
+      </div>`;
+  } else {
+    infoRow.style.display = 'none';
+  }
 }
 function calcTotal() {
   const rows = document.querySelectorAll('#temp-items-body tr');
@@ -698,14 +802,26 @@ async function savePO(status) {
   if (!po_number) { toast('กรุณากรอก PO Number', 'error'); return; }
   if (!project_name) { toast('กรุณากรอก Project Name', 'error'); return; }
 
-  const rows = document.querySelectorAll('#temp-items-body tr');
+  const rows = document.querySelectorAll('#temp-items-body tr[id^="temp-item-"]:not([id$="-info"])');
   const items = [];
   rows.forEach(row => {
-    const inputs = row.querySelectorAll('input');
+    const inputs = row.querySelectorAll('input[type="text"],input:not([type]),input[type="number"]');
     const sku = inputs[0]?.value.trim();
     const order_qty = parseInt(inputs[1]?.value || '0');
     const remark_purchase = inputs[2]?.value.trim();
-    if (sku && order_qty > 0) items.push({ sku, order_qty, remark_purchase: remark_purchase || '' });
+    if (!sku || order_qty <= 0) return;
+    // Collect logistics selection
+    const selected = row.querySelector(`input[name^="logistics-"]:checked`);
+    const [logCo, logMeth, logCost] = (selected?.value || '||').split('|');
+    items.push({
+      sku, order_qty, remark_purchase: remark_purchase || '',
+      item_type:          row.dataset.itemType || null,
+      shipping_cartons:   +(row.dataset.cartons || 0),
+      estimated_weight:   +(row.dataset.weight  || 0),
+      estimated_volume:   +(row.dataset.volume  || 0),
+      selected_logistics: selected ? `${logCo} ${logMeth}` : null,
+      shipping_cost:      selected ? +logCost : null,
+    });
   });
 
   try {
@@ -956,11 +1072,24 @@ async function renderWHReceive(body, topbar) {
 
   const itemForms = items.map((item, idx) => {
     const log = logs.find(l => l.sku === item.sku);
+    const isMaterial = item.item_type === 'Material';
+    const expectedCartons = isMaterial && item.shipping_cartons > 0 ? item.shipping_cartons : null;
+    const receiveLabel = isMaterial ? 'จำนวนลังที่รับได้' : 'จำนวนนับได้จริง';
+    const receiveUnit  = isMaterial ? 'ลัง' : 'ชิ้น';
+    // For material: display qty-block shows cartons, sub shows pieces
+    const qtyBlockHtml = expectedCartons
+      ? `<div class="qty-block"><span class="qty-main" style="color:#3b82f6">${expectedCartons.toLocaleString()}</span><span class="qty-sub">ลัง (${item.order_qty.toLocaleString()} ชิ้น)</span></div>`
+      : `<div class="qty-block"><span class="qty-main">${item.order_qty.toLocaleString()}</span><span class="qty-sub">Order QTY (ชิ้น)</span></div>`;
+
     return `
       <div class="card" style="margin-bottom:16px">
         <div class="card-header" style="margin-bottom:16px">
-          <div><div class="card-title font-mono">${item.sku}</div><div class="text-sm text-muted">${item.remark_purchase || 'ไม่มีหมายเหตุ'}</div></div>
-          <div class="qty-block"><span class="qty-main">${item.order_qty.toLocaleString()}</span><span class="qty-sub">Order QTY</span></div>
+          <div>
+            <div class="card-title font-mono">${item.sku}</div>
+            <div class="text-sm text-muted">${item.remark_purchase || 'ไม่มีหมายเหตุ'}</div>
+            ${isMaterial ? `<span class="badge badge-shipped" style="margin-top:4px">📦 Material — นับเป็นลัง</span>` : `<span class="badge badge-arrived" style="margin-top:4px">👕 Product — นับเป็นชิ้น</span>`}
+          </div>
+          ${qtyBlockHtml}
         </div>
         <div class="form-grid form-grid-3">
           <div class="form-group">
@@ -969,10 +1098,11 @@ async function renderWHReceive(body, topbar) {
               value="${log?.arrived_date ? log.arrived_date.substring(0,10) : today()}">
           </div>
           <div class="form-group">
-            <label>จำนวนนับได้จริง <span style="color:#ef4444">*</span></label>
+            <label>${receiveLabel} <span style="color:#ef4444">*</span>${isMaterial ? `<span class="text-muted text-sm"> (${receiveUnit})</span>` : ''}</label>
             <input class="form-control" type="number" id="receive-qty-${idx}" placeholder="0" min="0"
-              value="${log && log.receive_qty > 0 ? log.receive_qty : ''}"
-              oninput="calcQC(${idx}, ${item.order_qty})">
+              value="${log && log.receive_qty > 0 ? (isMaterial && item.shipping_cartons > 0 ? Math.round(log.receive_qty / (item.order_qty / item.shipping_cartons)) : log.receive_qty) : ''}"
+              oninput="calcQC(${idx}, ${isMaterial && item.shipping_cartons > 0 ? item.shipping_cartons : item.order_qty})" data-is-material="${isMaterial}" data-qty-per-carton="${isMaterial && item.shipping_cartons > 0 ? Math.round(item.order_qty / item.shipping_cartons) : 1}">
+            ${isMaterial && expectedCartons ? `<span class="hint">ที่สั่งมา ${expectedCartons} ลัง — กรอกจำนวนลังที่นับได้จริง</span>` : ''}
           </div>
           <div class="form-group">
             <label>Check Diff</label>
@@ -1118,12 +1248,17 @@ async function saveReceiving() {
   let hasData = false;
   items.forEach((item, idx) => {
     const arrived_date = document.getElementById(`arrived-${idx}`)?.value;
-    const receive_qty = parseInt(document.getElementById(`receive-qty-${idx}`)?.value || '0');
+    const receiveInput = document.getElementById(`receive-qty-${idx}`);
+    const inputVal = parseInt(receiveInput?.value || '0');
+    // For Material items: input is in cartons → convert to pieces for storage
+    const isMaterial = receiveInput?.dataset.isMaterial === 'true';
+    const qtyPerCarton = +(receiveInput?.dataset.qtyPerCarton || 1);
+    const receive_qty = isMaterial && qtyPerCarton > 1 ? inputVal * qtyPerCarton : inputVal;
     const pass_qc_qty = parseInt(document.getElementById(`pass-qc-${idx}`)?.value || '0');
     const not_pass_qc_qty = parseInt(document.getElementById(`not-pass-qc-${idx}`)?.value || '0');
     const remark_warehouse = document.getElementById(`remark-wh-${idx}`)?.value.trim();
     const photo_url = uploadedUrls[idx] || '';
-    if (receive_qty > 0) {
+    if (inputVal > 0) {
       hasData = true;
       logs.push({ sku: item.sku, arrived_date: arrived_date || today(), receive_qty, pass_qc_qty, not_pass_qc_qty, photo_url, remark_warehouse: remark_warehouse || '' });
     }
@@ -1141,6 +1276,280 @@ async function saveReceiving() {
     toast(err.message, 'error');
     if (btn) { btn.disabled = false; btn.textContent = '💾 บันทึกการรับสินค้าทั้งหมด'; }
   }
+}
+
+// ============================================================
+// ITEM MASTER
+// ============================================================
+async function renderItemMaster(body, topbar) {
+  topbar.innerHTML = `
+    <div class="topbar-left"><h2>🗂 Item Master</h2><p>ข้อมูล SKU, ประเภท และขนาดบรรจุภัณฑ์</p></div>
+    <div class="topbar-right"><button class="btn-primary" onclick="openItemMasterModal()">＋ เพิ่มสินค้า</button></div>`;
+
+  const items = _itemMasterList = await API.get('/item-master');
+  const TYPE_ICON = { Product: '👕', Material: '📦', Others: '🔲' };
+  const TYPE_LABEL = { Product: 'Product', Material: 'Material', Others: 'Others' };
+
+  const rows = items.length ? items.map(it => `
+    <tr>
+      <td class="font-mono">${it.item_id}</td>
+      <td>${it.item_name}</td>
+      <td><span class="badge ${it.item_type === 'Product' ? 'badge-arrived' : it.item_type === 'Material' ? 'badge-shipped' : 'badge-draft'}">${TYPE_ICON[it.item_type]||''} ${TYPE_LABEL[it.item_type]||it.item_type}</span></td>
+      <td class="text-right">${it.qty_per_carton}</td>
+      <td class="text-right td-muted">${it.item_type === 'Material' ? `${it.carton_weight} kg / ${it.carton_volume} CBM` : `${it.default_weight_per_pc} kg/ชิ้น`}</td>
+      <td class="text-right td-muted">${it.item_type === 'Material' ? `${it.carton_length}×${it.carton_width}×${it.carton_height} cm` : '-'}</td>
+      <td><div class="flex gap-2">
+        <button class="btn-secondary btn-sm" onclick="openItemMasterModal(${JSON.stringify(it).replace(/"/g,'&quot;')})">✏</button>
+        <button class="btn-danger btn-sm" onclick="deleteItemMaster('${it.item_id}','${it.item_name}')">ลบ</button>
+      </div></td>
+    </tr>`).join('') :
+    `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🗂</div><p>ยังไม่มีข้อมูล Item</p></div></td></tr>`;
+
+  body.innerHTML = `
+    <div class="card p-0">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>SKU / Item ID</th><th>ชื่อสินค้า</th><th>ประเภท</th><th style="text-align:right">ชิ้น/ลัง</th><th style="text-align:right">น้ำหนัก / ปริมาตร</th><th style="text-align:right">ขนาดลัง (cm)</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Item Modal (inline) -->
+    <div class="modal-overlay" id="im-modal" style="display:none" onclick="if(event.target===this)hideModal('im-modal')">
+      <div class="modal" style="max-width:600px">
+        <div class="modal-header">
+          <h3 id="im-modal-title">➕ เพิ่มสินค้า</h3>
+          <button class="modal-close" onclick="hideModal('im-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="im-edit-id">
+          <div class="form-grid form-grid-2">
+            <div class="form-group">
+              <label>SKU / Item ID <span style="color:#ef4444">*</span></label>
+              <input class="form-control" id="im-item-id" placeholder="เช่น MP-BJM-001-S">
+            </div>
+            <div class="form-group">
+              <label>ชื่อสินค้า <span style="color:#ef4444">*</span></label>
+              <input class="form-control" id="im-item-name" placeholder="ชื่อเต็ม">
+            </div>
+            <div class="form-group">
+              <label>ประเภท</label>
+              <select class="form-control" id="im-item-type" onchange="toggleItemTypeFields()">
+                <option value="Product">👕 Product</option>
+                <option value="Material">📦 Material</option>
+                <option value="Others">🔲 Others</option>
+              </select>
+            </div>
+            <div class="form-group" id="im-default-weight-row">
+              <label>น้ำหนักต่อชิ้น (kg)</label>
+              <input class="form-control" id="im-default-weight" type="number" step="0.001" placeholder="0.300">
+            </div>
+          </div>
+          <div id="im-material-fields">
+            <div class="form-grid form-grid-2" style="margin-top:16px">
+              <div class="form-group">
+                <label>จำนวนชิ้น/ลัง</label>
+                <input class="form-control" id="im-qty-per-carton" type="number" placeholder="250">
+              </div>
+              <div class="form-group">
+                <label>น้ำหนักต่อลัง (kg)</label>
+                <input class="form-control" id="im-carton-weight" type="number" step="0.01">
+              </div>
+              <div class="form-group">
+                <label>กว้าง (cm)</label>
+                <input class="form-control" id="im-carton-width" type="number" step="0.1" oninput="autoCalcCBM()">
+              </div>
+              <div class="form-group">
+                <label>ยาว (cm)</label>
+                <input class="form-control" id="im-carton-length" type="number" step="0.1" oninput="autoCalcCBM()">
+              </div>
+              <div class="form-group">
+                <label>สูง (cm)</label>
+                <input class="form-control" id="im-carton-height" type="number" step="0.1" oninput="autoCalcCBM()">
+              </div>
+              <div class="form-group">
+                <label>ปริมาตร/ลัง (CBM) <span class="text-muted text-sm">คำนวณอัตโนมัติ</span></label>
+                <input class="form-control" id="im-carton-volume" type="number" step="0.0001" placeholder="0.0000">
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="hideModal('im-modal')">ยกเลิก</button>
+          <button class="btn-primary" onclick="saveItemMaster()">💾 บันทึก</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function toggleItemTypeFields() {
+  const type = document.getElementById('im-item-type')?.value;
+  const matFields = document.getElementById('im-material-fields');
+  const wtRow = document.getElementById('im-default-weight-row');
+  if (!matFields || !wtRow) return;
+  matFields.style.display = type === 'Material' ? '' : 'none';
+  wtRow.style.display = type === 'Product' ? '' : 'none';
+}
+function autoCalcCBM() {
+  const w = +document.getElementById('im-carton-width')?.value || 0;
+  const l = +document.getElementById('im-carton-length')?.value || 0;
+  const h = +document.getElementById('im-carton-height')?.value || 0;
+  const vol = document.getElementById('im-carton-volume');
+  if (vol) vol.value = (w * l * h / 1e6).toFixed(4);
+}
+function openItemMasterModal(item) {
+  document.getElementById('im-modal-title').textContent = item ? '✏ แก้ไขสินค้า' : '➕ เพิ่มสินค้า';
+  document.getElementById('im-edit-id').value = item?.item_id || '';
+  document.getElementById('im-item-id').value = item?.item_id || '';
+  document.getElementById('im-item-id').disabled = !!item;
+  document.getElementById('im-item-name').value = item?.item_name || '';
+  document.getElementById('im-item-type').value = item?.item_type || 'Product';
+  document.getElementById('im-default-weight').value = item?.default_weight_per_pc || 0.3;
+  document.getElementById('im-qty-per-carton').value = item?.qty_per_carton || '';
+  document.getElementById('im-carton-weight').value = item?.carton_weight || '';
+  document.getElementById('im-carton-width').value = item?.carton_width || '';
+  document.getElementById('im-carton-length').value = item?.carton_length || '';
+  document.getElementById('im-carton-height').value = item?.carton_height || '';
+  document.getElementById('im-carton-volume').value = item?.carton_volume || '';
+  toggleItemTypeFields();
+  showModal('im-modal');
+}
+async function saveItemMaster() {
+  const editId = document.getElementById('im-edit-id').value;
+  const payload = {
+    item_id: document.getElementById('im-item-id').value.trim(),
+    item_name: document.getElementById('im-item-name').value.trim(),
+    item_type: document.getElementById('im-item-type').value,
+    default_weight_per_pc: +document.getElementById('im-default-weight').value || 0.3,
+    qty_per_carton: +document.getElementById('im-qty-per-carton').value || 1,
+    carton_weight: +document.getElementById('im-carton-weight').value || 0,
+    carton_width: +document.getElementById('im-carton-width').value || 0,
+    carton_length: +document.getElementById('im-carton-length').value || 0,
+    carton_height: +document.getElementById('im-carton-height').value || 0,
+    carton_volume: +document.getElementById('im-carton-volume').value || 0,
+  };
+  if (!payload.item_id || !payload.item_name) { toast('กรุณากรอก SKU และชื่อสินค้า', 'error'); return; }
+  try {
+    if (editId) await API.put(`/item-master/${editId}`, payload);
+    else        await API.post('/item-master', payload);
+    hideModal('im-modal');
+    toast('บันทึกสำเร็จ', 'success');
+    await renderItemMaster(document.getElementById('page-body'), document.getElementById('topbar-inner'));
+  } catch (err) { toast(err.message, 'error'); }
+}
+async function deleteItemMaster(itemId, itemName) {
+  if (!confirm(`ลบ "${itemName}" ออกจาก Item Master?`)) return;
+  try {
+    await API.del(`/item-master/${itemId}`);
+    toast('ลบสำเร็จ', 'success');
+    await renderItemMaster(document.getElementById('page-body'), document.getElementById('topbar-inner'));
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ============================================================
+// LOGISTICS RATES
+// ============================================================
+async function renderLogisticsRates(body, topbar) {
+  topbar.innerHTML = `
+    <div class="topbar-left"><h2>🚚 Logistics Rates</h2><p>ตารางเรทค่าขนส่งแต่ละช่องทาง</p></div>
+    <div class="topbar-right"><button class="btn-primary" onclick="openRateModal()">＋ เพิ่มเรท</button></div>`;
+
+  const rates = _logisticsRates = await API.get('/logistics-rates');
+  const rows = rates.length ? rates.map(r => `
+    <tr>
+      <td><strong>${r.company_name}</strong></td>
+      <td>${r.shipping_method === 'รถ' ? '🚛 รถ' : r.shipping_method === 'เรือ' ? '🚢 เรือ' : r.shipping_method}</td>
+      <td><span class="badge ${r.charge_type === 'Weight' ? 'badge-ordered' : 'badge-shipped'}">${r.charge_type === 'Weight' ? '🏋 Weight (kg)' : '📐 Volume (CBM)'}</span></td>
+      <td class="text-right"><strong>${(+r.rate_price).toLocaleString()}</strong> บาท/${r.charge_type === 'Weight' ? 'kg' : 'CBM'}</td>
+      <td><div class="flex gap-2">
+        <button class="btn-secondary btn-sm" onclick="openRateModal(${JSON.stringify(r).replace(/"/g,'&quot;')})">✏</button>
+        <button class="btn-danger btn-sm" onclick="deleteRate(${r.id})">ลบ</button>
+      </div></td>
+    </tr>`).join('') :
+    `<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">🚚</div><p>ยังไม่มีเรทขนส่ง</p></div></td></tr>`;
+
+  body.innerHTML = `
+    <div class="card p-0">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>บริษัทขนส่ง</th><th>วิธี</th><th>คิดตาม</th><th style="text-align:right">ราคาต่อหน่วย</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="rate-modal" style="display:none" onclick="if(event.target===this)hideModal('rate-modal')">
+      <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+          <h3 id="rate-modal-title">➕ เพิ่มเรทขนส่ง</h3>
+          <button class="modal-close" onclick="hideModal('rate-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="rate-edit-id">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>บริษัทขนส่ง</label>
+              <input class="form-control" id="rate-company" placeholder="HLT, CTW...">
+            </div>
+            <div class="form-group">
+              <label>วิธีขนส่ง</label>
+              <input class="form-control" id="rate-method" placeholder="รถ, เรือ, EK...">
+            </div>
+            <div class="form-group">
+              <label>คิดตาม</label>
+              <select class="form-control" id="rate-charge-type">
+                <option value="Weight">🏋 น้ำหนัก (per kg)</option>
+                <option value="Volume">📐 ปริมาตร (per CBM)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>ราคาต่อหน่วย (บาท)</label>
+              <input class="form-control" id="rate-price" type="number" step="0.01" placeholder="0">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="hideModal('rate-modal')">ยกเลิก</button>
+          <button class="btn-primary" onclick="saveRate()">💾 บันทึก</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function openRateModal(rate) {
+  document.getElementById('rate-modal-title').textContent = rate ? '✏ แก้ไขเรท' : '➕ เพิ่มเรทขนส่ง';
+  document.getElementById('rate-edit-id').value = rate?.id || '';
+  document.getElementById('rate-company').value = rate?.company_name || '';
+  document.getElementById('rate-method').value = rate?.shipping_method || '';
+  document.getElementById('rate-charge-type').value = rate?.charge_type || 'Weight';
+  document.getElementById('rate-price').value = rate?.rate_price || '';
+  showModal('rate-modal');
+}
+async function saveRate() {
+  const editId = document.getElementById('rate-edit-id').value;
+  const payload = {
+    company_name: document.getElementById('rate-company').value.trim(),
+    shipping_method: document.getElementById('rate-method').value.trim(),
+    charge_type: document.getElementById('rate-charge-type').value,
+    rate_price: +document.getElementById('rate-price').value,
+  };
+  if (!payload.company_name || !payload.shipping_method) { toast('กรุณากรอกให้ครบ', 'error'); return; }
+  try {
+    if (editId) await API.put(`/logistics-rates/${editId}`, payload);
+    else        await API.post('/logistics-rates', payload);
+    hideModal('rate-modal');
+    toast('บันทึกสำเร็จ', 'success');
+    await renderLogisticsRates(document.getElementById('page-body'), document.getElementById('topbar-inner'));
+  } catch (err) { toast(err.message, 'error'); }
+}
+async function deleteRate(id) {
+  if (!confirm('ลบเรทนี้?')) return;
+  try {
+    await API.del(`/logistics-rates/${id}`);
+    toast('ลบสำเร็จ', 'success');
+    await renderLogisticsRates(document.getElementById('page-body'), document.getElementById('topbar-inner'));
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 // ============================================================
