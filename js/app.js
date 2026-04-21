@@ -1196,7 +1196,6 @@ async function goReceive(poNumber) {
 // ============================================================
 // WAREHOUSE — RECEIVE & QC
 // ============================================================
-let photoFiles = {};        // {idx: [File, ...]} — per-SKU photos
 let poLevelPhotoFiles = []; // PO-level evidence photos (not tied to any SKU)
 
 async function renderWHReceive(body, topbar) {
@@ -1208,7 +1207,6 @@ async function renderWHReceive(body, topbar) {
 
   const items = po.items || [];
   const logs = po.logs || [];
-  photoFiles = {};
   poLevelPhotoFiles = [];
 
   // Load existing PO-level evidence images
@@ -1279,19 +1277,6 @@ async function renderWHReceive(body, topbar) {
         <div class="form-group mt-3">
           <label>หมายเหตุคลัง</label>
           <textarea class="form-control" id="remark-wh-${idx}" placeholder="สภาพสินค้า, ปัญหาที่พบ...">${log?.remark_warehouse || ''}</textarea>
-        </div>
-        <div class="form-group mt-3">
-          <label>รูปภาพหลักฐาน</label>
-          <div class="photo-upload-area" onclick="document.getElementById('photo-upload-${idx}').click()"
-            ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')"
-            ondrop="handleDrop(event,${idx})">
-            <input type="file" id="photo-upload-${idx}" accept="image/*" multiple onchange="handlePhotoUpload(this,${idx})" style="display:none">
-            <div class="upload-icon">📷</div>
-            <p>คลิกหรือลากวางรูปที่นี่</p>
-            <small>JPG, PNG, WEBP — ไม่เกิน 5MB</small>
-          </div>
-          <div class="photo-preview-grid" id="photo-preview-${idx}"></div>
-          ${log?.photo_url ? `<div class="text-sm text-muted mt-3">📎 รูปที่บันทึกแล้ว: ${log.photo_url}</div>` : ''}
         </div>
       </div>`;
   }).join('');
@@ -1380,27 +1365,6 @@ function updateQCResult(idx, notPass) {
   if (el) el.innerHTML = notPass > 0 ? `<span class="badge badge-shipped">ไม่ผ่าน ${notPass} ชิ้น</span>` : `<span class="badge badge-arrived">ผ่านทั้งหมด</span>`;
 }
 
-function handlePhotoUpload(input, idx) {
-  if (!photoFiles[idx]) photoFiles[idx] = [];
-  photoFiles[idx].push(...Array.from(input.files));
-  renderPhotoPreviews(idx);
-}
-function handleDrop(event, idx) {
-  event.preventDefault();
-  event.currentTarget.classList.remove('drag');
-  if (!photoFiles[idx]) photoFiles[idx] = [];
-  photoFiles[idx].push(...Array.from(event.dataTransfer.files).filter(f => f.type.startsWith('image/')));
-  renderPhotoPreviews(idx);
-}
-function renderPhotoPreviews(idx) {
-  const grid = document.getElementById(`photo-preview-${idx}`); if (!grid) return;
-  grid.innerHTML = (photoFiles[idx] || []).map((f, i) => {
-    const url = URL.createObjectURL(f);
-    return `<div class="photo-preview-item"><img src="${url}"><button class="remove-photo" onclick="removePhoto(${idx},${i})">✕</button></div>`;
-  }).join('');
-}
-function removePhoto(idx, i) { photoFiles[idx].splice(i, 1); renderPhotoPreviews(idx); }
-
 // PO-level evidence photo handlers
 function handlePOLevelUpload(input) {
   poLevelPhotoFiles.push(...Array.from(input.files));
@@ -1436,18 +1400,6 @@ async function saveReceiving() {
   const new_status = document.getElementById('wh-status-update')?.value || po.status;
   const btn = document.getElementById('save-receiving-btn');
 
-  // Upload photos first
-  const uploadedUrls = {};
-  for (let idx = 0; idx < items.length; idx++) {
-    const files = photoFiles[idx] || [];
-    if (files.length) {
-      try {
-        const result = await API.uploadPhotos(files);
-        uploadedUrls[idx] = result.urls.join(', ');
-      } catch { uploadedUrls[idx] = ''; }
-    }
-  }
-
   const logs = [];
   let hasData = false;
   items.forEach((item, idx) => {
@@ -1461,10 +1413,9 @@ async function saveReceiving() {
     const pass_qc_qty = parseInt(document.getElementById(`pass-qc-${idx}`)?.value || '0');
     const not_pass_qc_qty = parseInt(document.getElementById(`not-pass-qc-${idx}`)?.value || '0');
     const remark_warehouse = document.getElementById(`remark-wh-${idx}`)?.value.trim();
-    const photo_url = uploadedUrls[idx] || '';
     if (inputVal > 0) {
       hasData = true;
-      logs.push({ sku: item.sku, arrived_date: arrived_date || today(), receive_qty, pass_qc_qty, not_pass_qc_qty, photo_url, remark_warehouse: remark_warehouse || '' });
+      logs.push({ sku: item.sku, arrived_date: arrived_date || today(), receive_qty, pass_qc_qty, not_pass_qc_qty, remark_warehouse: remark_warehouse || '' });
     }
   });
 
@@ -1478,7 +1429,6 @@ async function saveReceiving() {
       try { await API.uploadPOImages(po.po_number, poLevelPhotoFiles); }
       catch (e) { console.warn('PO image upload warning:', e.message); }
     }
-    photoFiles = {};
     poLevelPhotoFiles = [];
     toast(`บันทึกการรับสินค้า ${po.po_number} สำเร็จ!`, 'success');
     navigate('wh-search');
