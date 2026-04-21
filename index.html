@@ -98,11 +98,15 @@
 <div class="modal-overlay" id="edit-status-modal" style="display:none" onclick="if(event.target===this)hideModal('edit-status-modal')">
   <div class="modal">
     <div class="modal-header">
-      <h3>✏ อัปเดตสถานะ — <span id="modal-po-number"></span></h3>
+      <h3>✏ แก้ไข PO — <span id="modal-po-number"></span></h3>
       <button class="modal-close" onclick="hideModal('edit-status-modal')">✕</button>
     </div>
     <div class="modal-body">
       <div class="form-grid">
+        <div class="form-group">
+          <label>Order Date (วันที่สั่ง)</label>
+          <input class="form-control" type="date" id="edit-order-date">
+        </div>
         <div class="form-group">
           <label>สถานะใหม่</label>
           <select class="form-control" id="edit-status" onchange="toggleDepartureField()">

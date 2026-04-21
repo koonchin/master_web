@@ -146,14 +146,18 @@ app.put('/api/po/:poNumber', async (req, res) => {
   try {
     const { poNumber } = req.params;
     const { status, departure_date, est_lead_time, project_name,
-            logistics_company, shipping_method } = req.body;
+            logistics_company, shipping_method,
+            order_date, actual_billed_weight, actual_billed_volume } = req.body;
 
     const fields = [];
     const values = [];
-    if (status !== undefined)             { fields.push('status = ?');             values.push(status); }
-    if (departure_date !== undefined)     { fields.push('departure_date = ?');     values.push(departure_date || null); }
-    if (project_name !== undefined)       { fields.push('project_name = ?');       values.push(project_name); }
-    if (logistics_company !== undefined)  { fields.push('logistics_company = ?');  values.push(logistics_company || null); }
+    if (status !== undefined)                { fields.push('status = ?');                values.push(status); }
+    if (departure_date !== undefined)        { fields.push('departure_date = ?');        values.push(departure_date || null); }
+    if (order_date !== undefined)            { fields.push('order_date = ?');            values.push(order_date || null); }
+    if (project_name !== undefined)          { fields.push('project_name = ?');          values.push(project_name); }
+    if (logistics_company !== undefined)     { fields.push('logistics_company = ?');     values.push(logistics_company || null); }
+    if (actual_billed_weight !== undefined)  { fields.push('actual_billed_weight = ?');  values.push(+actual_billed_weight || 0); }
+    if (actual_billed_volume !== undefined)  { fields.push('actual_billed_volume = ?');  values.push(+actual_billed_volume || 0); }
     if (shipping_method !== undefined) {
       fields.push('shipping_method = ?');
       values.push(shipping_method || null);
@@ -163,7 +167,7 @@ app.put('/api/po/:poNumber', async (req, res) => {
         fields.push('est_lead_time = ?'); values.push(autoLead);
       }
     }
-    if (est_lead_time !== undefined)      { fields.push('est_lead_time = ?');      values.push(est_lead_time); }
+    if (est_lead_time !== undefined)         { fields.push('est_lead_time = ?');         values.push(est_lead_time); }
 
     if (!fields.length) return res.status(400).json({ error: 'No fields to update' });
 
@@ -328,13 +332,16 @@ app.post('/api/item-master', async (req, res) => {
             carton_width, carton_length, carton_height, carton_weight, carton_volume,
             default_weight_per_pc } = req.body;
     if (!item_id || !item_name) return res.status(400).json({ error: 'item_id and item_name required' });
+    const { measurement_photo_url } = req.body;
     await pool.query(
       `INSERT INTO Item_Master (item_id,item_name,item_type,qty_per_carton,
-         carton_width,carton_length,carton_height,carton_weight,carton_volume,default_weight_per_pc)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+         carton_width,carton_length,carton_height,carton_weight,carton_volume,
+         default_weight_per_pc,measurement_photo_url)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       [item_id, item_name, item_type||'Others', qty_per_carton||1,
        carton_width||0, carton_length||0, carton_height||0,
-       carton_weight||0, carton_volume||0, default_weight_per_pc||0.3]
+       carton_weight||0, carton_volume||0, default_weight_per_pc||0.3,
+       measurement_photo_url||null]
     );
     const [[newItem]] = await pool.query('SELECT * FROM Item_Master WHERE item_id = ?', [item_id]);
     res.status(201).json(newItem);
@@ -344,7 +351,8 @@ app.post('/api/item-master', async (req, res) => {
 app.put('/api/item-master/:itemId', async (req, res) => {
   try {
     const allowed = ['item_name','item_type','qty_per_carton','carton_width','carton_length',
-                     'carton_height','carton_weight','carton_volume','default_weight_per_pc'];
+                     'carton_height','carton_weight','carton_volume','default_weight_per_pc',
+                     'measurement_photo_url'];
     const fields = [], values = [];
     for (const key of allowed) {
       if (req.body[key] !== undefined) { fields.push(`${key} = ?`); values.push(req.body[key]); }

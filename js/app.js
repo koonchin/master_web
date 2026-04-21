@@ -609,6 +609,59 @@ async function renderPODetail(body, topbar) {
         </div>`).join('')}
       </div>
     </div>` : ''}
+    ${isPurchase ? (() => {
+      const sysWeight = items.reduce((s, it) => s + (+it.estimated_weight || 0), 0);
+      const sysVolume = items.reduce((s, it) => s + (+it.estimated_volume || 0), 0);
+      const billedW   = +(po.actual_billed_weight || 0);
+      const billedV   = +(po.actual_billed_volume || 0);
+      const diffW     = +(billedW - sysWeight).toFixed(2);
+      const diffV     = +(billedV - sysVolume).toFixed(4);
+      const pctW      = sysWeight > 0 ? ((diffW / sysWeight) * 100).toFixed(1) : null;
+      const pctV      = sysVolume > 0 ? ((diffV / sysVolume) * 100).toFixed(1) : null;
+      const warnW     = pctW !== null && Math.abs(+pctW) > 5;
+      const warnV     = pctV !== null && Math.abs(+pctV) > 5;
+      const hasSystem = sysWeight > 0 || sysVolume > 0;
+      const compTable = hasSystem ? `
+        <div class="table-wrap" style="margin-top:12px;border:1px solid #e2e8f0;border-radius:10px">
+          <table>
+            <thead><tr><th>ประเภท</th><th style="text-align:right">System (คำนวณ)</th><th style="text-align:right">Billed (ขนส่งเรียก)</th><th style="text-align:right">ส่วนต่าง</th><th style="text-align:right">%</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>🏋 น้ำหนัก (kg)</td>
+                <td class="text-right">${sysWeight.toLocaleString()}</td>
+                <td class="text-right">${billedW.toLocaleString()}</td>
+                <td class="text-right" style="color:${diffW > 0 ? '#dc2626' : diffW < 0 ? '#059669' : '#374151'}">${diffW > 0 ? '+' : ''}${diffW}</td>
+                <td class="text-right">${pctW !== null ? `<span style="color:${warnW ? '#dc2626' : '#374151'}">${warnW ? '⚠ ' : ''}${pctW}%</span>` : '-'}</td>
+              </tr>
+              <tr>
+                <td>📐 ปริมาตร (CBM)</td>
+                <td class="text-right">${sysVolume}</td>
+                <td class="text-right">${billedV}</td>
+                <td class="text-right" style="color:${diffV > 0 ? '#dc2626' : diffV < 0 ? '#059669' : '#374151'}">${diffV > 0 ? '+' : ''}${diffV}</td>
+                <td class="text-right">${pctV !== null ? `<span style="color:${warnV ? '#dc2626' : '#374151'}">${warnV ? '⚠ ' : ''}${pctV}%</span>` : '-'}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        ${(warnW || warnV) ? `<div class="alert alert-amber" style="margin-top:12px"><span class="alert-icon">⚠️</span><div class="alert-body"><div class="alert-title">ส่วนต่างเกิน 5% — ควรตรวจสอบบิลขนส่ง</div></div></div>` : ''}
+      ` : '';
+      return `
+    <div class="card">
+      <div class="card-title mb-4">⚖️ ตรวจสอบบิลขนส่ง</div>
+      <div class="form-grid form-grid-2" style="max-width:520px">
+        <div class="form-group">
+          <label>น้ำหนักที่ขนส่งเรียกเก็บ (kg)</label>
+          <input class="form-control" type="number" step="0.01" id="billed-weight" value="${billedW || ''}">
+        </div>
+        <div class="form-group">
+          <label>ปริมาตรที่ขนส่งเรียกเก็บ (CBM)</label>
+          <input class="form-control" type="number" step="0.0001" id="billed-volume" value="${billedV || ''}">
+        </div>
+      </div>
+      <button class="btn-secondary btn-sm" onclick="saveBilledData('${po.po_number}')" style="margin-bottom:4px">💾 บันทึกค่าบิลจริง</button>
+      ${compTable}
+    </div>`;
+    })() : ''}
     ${currentRole === 'purchase' ? `
     <div class="card">
       <div class="card-header"><div class="card-title">✏ จัดการรายการสินค้า</div><button class="btn-primary btn-sm" onclick="openAddItemModal('${po.po_number}')">＋ เพิ่ม SKU</button></div>
@@ -900,6 +953,8 @@ async function onQtyChange(idx) {
           <span class="badge ${r.charge_type==='Weight'?'badge-ordered':'badge-shipped'}">${r.charge_type==='Weight'?'น้ำหนัก':'ปริมาตร'}</span>
           <span style="margin-left:auto;font-weight:700;color:#059669">${r.cost.toLocaleString()} บาท</span>
           ${i===0?'<span style="font-size:11px;color:#059669;font-weight:600">ถูกสุด</span>':''}
+          <button type="button" class="btn-secondary btn-sm" style="margin-left:8px;padding:2px 8px;font-size:11px"
+            onclick="selectLogisticsForPO('${r.company}','${r.method}');event.stopPropagation()">🎯 ใช้วิธีนี้</button>
         </label>`).join('');
       document.getElementById(`logistics-compare-${idx}`).innerHTML =
         `<div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:6px">🔀 เปรียบเทียบค่าขนส่ง</div>${compareRows}`;
@@ -917,6 +972,15 @@ async function onQtyChange(idx) {
     infoRow.style.display = 'none';
   }
 }
+// Auto-fill PO header company/method when user picks from logistics compare table
+function selectLogisticsForPO(company, method) {
+  const companyEl = document.getElementById('f-logistics-company');
+  const methodEl  = document.getElementById('f-shipping-method');
+  if (companyEl) companyEl.value = company;
+  if (methodEl)  { methodEl.value = method; autoLeadTime('f-lead-time'); }
+  toast(`เลือก ${company} — ${method} แล้ว (กรอกที่หัวบิลให้อัตโนมัติ)`, 'success');
+}
+
 function calcTotal() {
   const rows = document.querySelectorAll('#temp-items-body tr');
   let totalQty = 0, totalSku = 0;
@@ -983,6 +1047,7 @@ function openEditStatusModal(poNumber) {
   if (!po) return;
   editingPO = po;
   document.getElementById('modal-po-number').textContent = poNumber;
+  document.getElementById('edit-order-date').value = po.order_date ? po.order_date.substring(0, 10) : '';
   document.getElementById('edit-status').value = po.status;
   document.getElementById('edit-departure').value = po.departure_date ? po.departure_date.substring(0, 10) : '';
   document.getElementById('edit-logistics-company').value = po.logistics_company || '';
@@ -998,18 +1063,32 @@ function toggleDepartureField() {
 }
 async function saveStatusUpdate() {
   const po = editingPO; if (!po) return;
+  const order_date       = document.getElementById('edit-order-date')?.value || null;
   const status           = document.getElementById('edit-status').value;
   const departure_date   = document.getElementById('edit-departure').value || null;
   const logistics_company = document.getElementById('edit-logistics-company')?.value || null;
   const shipping_method  = document.getElementById('edit-shipping-method')?.value || null;
   const est_lead_time    = parseInt(document.getElementById('edit-leadtime').value);
   try {
-    await API.put(`/po/${po.po_number}`, { status, departure_date, logistics_company, shipping_method, est_lead_time });
+    await API.put(`/po/${po.po_number}`, { order_date, status, departure_date, logistics_company, shipping_method, est_lead_time });
     hideModal('edit-status-modal');
     toast(`อัปเดต ${po.po_number} → ${STATUS_LABELS[status]} สำเร็จ`, 'success');
     // Refresh data
     _allPOHeaders = await API.get('/po');
     editingPO = _allPOHeaders.find(p => p.po_number === po.po_number) || editingPO;
+    renderView(currentView);
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function saveBilledData(poNumber) {
+  const actual_billed_weight = +document.getElementById('billed-weight')?.value || 0;
+  const actual_billed_volume = +document.getElementById('billed-volume')?.value || 0;
+  try {
+    await API.put(`/po/${poNumber}`, { actual_billed_weight, actual_billed_volume });
+    toast('บันทึกค่าบิลจริงสำเร็จ', 'success');
+    // Refresh to re-render discrepancy table
+    _allPOHeaders = await API.get('/po');
+    editingPO = await API.get(`/po/${poNumber}`);
     renderView(currentView);
   } catch (err) { toast(err.message, 'error'); }
 }
@@ -1458,18 +1537,21 @@ async function renderItemMaster(body, topbar) {
       <td class="text-right">${it.qty_per_carton}</td>
       <td class="text-right td-muted">${it.item_type === 'Material' ? `${it.carton_weight} kg / ${it.carton_volume} CBM` : `${it.default_weight_per_pc} kg/ชิ้น`}</td>
       <td class="text-right td-muted">${it.item_type === 'Material' ? `${it.carton_length}×${it.carton_width}×${it.carton_height} cm` : '-'}</td>
+      <td style="text-align:center">${it.measurement_photo_url
+        ? `<a href="${it.measurement_photo_url}" target="_blank" title="ดูรูปวัดสเปค" style="font-size:18px;text-decoration:none">📷</a>`
+        : '<span class="td-muted">-</span>'}</td>
       <td><div class="flex gap-2">
         <button class="btn-secondary btn-sm" onclick="openItemMasterModal(${JSON.stringify(it).replace(/"/g,'&quot;')})">✏</button>
         <button class="btn-danger btn-sm" onclick="deleteItemMaster('${it.item_id}','${it.item_name}')">ลบ</button>
       </div></td>
     </tr>`).join('') :
-    `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🗂</div><p>ยังไม่มีข้อมูล Item</p></div></td></tr>`;
+    `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🗂</div><p>ยังไม่มีข้อมูล Item</p></div></td></tr>`;
 
   body.innerHTML = `
     <div class="card p-0">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>SKU / Item ID</th><th>ชื่อสินค้า</th><th>ประเภท</th><th style="text-align:right">ชิ้น/ลัง</th><th style="text-align:right">น้ำหนัก / ปริมาตร</th><th style="text-align:right">ขนาดลัง (cm)</th><th></th></tr></thead>
+          <thead><tr><th>SKU / Item ID</th><th>ชื่อสินค้า</th><th>ประเภท</th><th style="text-align:right">ชิ้น/ลัง</th><th style="text-align:right">น้ำหนัก / ปริมาตร</th><th style="text-align:right">ขนาดลัง (cm)</th><th style="text-align:center">📷</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -1534,6 +1616,11 @@ async function renderItemMaster(body, topbar) {
               </div>
             </div>
           </div>
+          <div class="form-group" style="margin-top:16px">
+            <label>📷 รูปหลักฐานการวัดขนาด (Measurement Photo)</label>
+            <input type="file" class="form-control" id="im-photo-file" accept="image/*" style="padding:6px">
+            <div id="im-photo-preview" style="margin-top:8px"></div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="hideModal('im-modal')">ยกเลิก</button>
@@ -1572,6 +1659,18 @@ function openItemMasterModal(item) {
   document.getElementById('im-carton-length').value = item?.carton_length || '';
   document.getElementById('im-carton-height').value = item?.carton_height || '';
   document.getElementById('im-carton-volume').value = item?.carton_volume || '';
+  // Reset photo input and show existing photo thumbnail
+  const fileInput = document.getElementById('im-photo-file');
+  const preview   = document.getElementById('im-photo-preview');
+  if (fileInput) fileInput.value = '';
+  if (preview) {
+    preview.innerHTML = item?.measurement_photo_url
+      ? `<div style="display:flex;align-items:center;gap:10px">
+           <img src="${item.measurement_photo_url}" style="height:60px;border-radius:6px;cursor:zoom-in;border:1px solid #e2e8f0" onclick="window.open('${item.measurement_photo_url}','_blank')">
+           <span class="text-sm text-muted">รูปปัจจุบัน (เลือกไฟล์ใหม่เพื่อเปลี่ยน)</span>
+         </div>`
+      : '';
+  }
   toggleItemTypeFields();
   showModal('im-modal');
 }
@@ -1590,6 +1689,14 @@ async function saveItemMaster() {
     carton_volume: +document.getElementById('im-carton-volume').value || 0,
   };
   if (!payload.item_id || !payload.item_name) { toast('กรุณากรอก SKU และชื่อสินค้า', 'error'); return; }
+  // Upload measurement photo if selected
+  const photoFile = document.getElementById('im-photo-file')?.files?.[0];
+  if (photoFile) {
+    try {
+      const result = await API.uploadPhotos([photoFile]);
+      payload.measurement_photo_url = result.urls[0];
+    } catch { /* upload failed — save without photo */ }
+  }
   try {
     if (editId) await API.put(`/item-master/${editId}`, payload);
     else        await API.post('/item-master', payload);
