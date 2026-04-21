@@ -44,6 +44,16 @@ const API = {
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
     return res.json(); // { urls: [...] }
   },
+  async uploadPOImages(poNumber, files) {
+    const form = new FormData();
+    files.forEach(f => form.append('photos', f));
+    const res = await fetch(API_BASE + `/po/${poNumber}/images`, { method: 'POST', body: form });
+    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+    return res.json(); // { urls, images }
+  },
+  async deletePOImage(id) {
+    return this.del(`/po-images/${id}`);
+  },
 };
 
 // --- Helpers ---
@@ -385,7 +395,7 @@ async function renderPOList(body, topbar) {
       <div class="filter-row">
         <div class="search-bar" style="max-width:400px">
           <span class="icon">🔍</span>
-          <input type="text" id="search-po" placeholder="ค้นหา PO Number, Project หรือ SKU..." oninput="applyPOListFilter()">
+          <input type="text" id="search-po" placeholder="ค้นหา PO, Project, SKU... (คั่นด้วย , เพื่อค้นหาหลายรายการ)" oninput="applyPOListFilter()">
         </div>
         <select class="form-control" id="filter-status" style="width:180px" onchange="applyPOListFilter()">
           <option value="">ทุกสถานะ</option>
@@ -411,7 +421,8 @@ async function renderPOList(body, topbar) {
 }
 
 function applyPOListFilter() {
-  const q = (document.getElementById('search-po')?.value || '').trim().toLowerCase();
+  const rawSearch = document.getElementById('search-po')?.value || '';
+  const terms = rawSearch.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
   const statusFilter = document.getElementById('filter-status')?.value || '';
   let headers = [..._allPOHeaders];
 
@@ -419,14 +430,25 @@ function applyPOListFilter() {
   if (statusFilter === '__overdue__') headers = headers.filter(p => isOverdue(p));
   else if (statusFilter) headers = headers.filter(p => p.status === statusFilter);
 
-  // Filter by search query (PO number, project, OR sku)
+  // Multi-term search: PO number, project name, OR any SKU
+  // A PO matches if ANY search term matches any field
   let matchedSkus = {}; // { po_number: [matched skus] }
-  if (q) {
+  if (terms.length) {
     headers = headers.filter(p => {
-      const inHeader = p.po_number.toLowerCase().includes(q) || p.project_name.toLowerCase().includes(q);
-      const skuMatches = (p.skus || []).filter(s => s.toLowerCase().includes(q));
-      if (skuMatches.length) matchedSkus[p.po_number] = skuMatches;
-      return inHeader || skuMatches.length > 0;
+      const poNum = p.po_number.toLowerCase();
+      const proj  = p.project_name.toLowerCase();
+      return terms.some(term => {
+        const inHeader = poNum.includes(term) || proj.includes(term);
+        const skuHits  = (p.skus || []).filter(s => s.toLowerCase().includes(term));
+        if (skuHits.length) {
+          matchedSkus[p.po_number] = [...(matchedSkus[p.po_number] || []), ...skuHits];
+        }
+        return inHeader || skuHits.length > 0;
+      });
+    });
+    // De-duplicate matched SKUs
+    Object.keys(matchedSkus).forEach(k => {
+      matchedSkus[k] = [...new Set(matchedSkus[k])];
     });
   }
 
@@ -492,6 +514,10 @@ async function renderPODetail(body, topbar) {
 
   const overdue = isOverdue(po); const eta = getETA(po);
   const items = po.items || []; const logs = po.logs || [];
+
+  // Load PO-level evidence photos
+  let poImages = [];
+  try { poImages = await API.get(`/po/${po.po_number}/images`); } catch { /* optional */ }
 
   topbar.innerHTML = `
     <div class="topbar-left"><h2><span class="po-number-tag">${po.po_number}</span></h2><p>${po.project_name}</p></div>
@@ -574,6 +600,15 @@ async function renderPODetail(body, topbar) {
         </table>
       </div>
     </div>
+    ${poImages.length ? `
+    <div class="card">
+      <div class="card-title mb-4">📸 รูปภาพหลักฐาน (${poImages.length} รูป)</div>
+      <div class="photo-preview-grid">${poImages.map(img => `
+        <div class="photo-preview-item" style="cursor:zoom-in" onclick="window.open('${img.photo_url}','_blank')" title="${new Date(img.uploaded_at).toLocaleString('th-TH')}">
+          <img src="${img.photo_url}">
+        </div>`).join('')}
+      </div>
+    </div>` : ''}
     ${currentRole === 'purchase' ? `
     <div class="card">
       <div class="card-header"><div class="card-title">✏ จัดการรายการสินค้า</div><button class="btn-primary btn-sm" onclick="openAddItemModal('${po.po_number}')">＋ เพิ่ม SKU</button></div>
@@ -680,6 +715,13 @@ async function renderCreatePO(body, topbar) {
     </div>`;
 
   tempItemCount = 1; calcTotal();
+
+  // Attach keyboard nav (Tab/Enter) and Excel paste handlers
+  const gridBody = document.getElementById('temp-items-body');
+  if (gridBody) {
+    gridBody.addEventListener('keydown', handleGridKeydown);
+    gridBody.addEventListener('paste',   handleGridPaste);
+  }
 }
 
 let tempItemCount = 1;
@@ -701,6 +743,104 @@ function addTempItem() {
   tr.querySelector('button').onclick = () => { tr.remove(); infoTr.remove(); calcTotal(); };
   tbody.appendChild(tr);
   tbody.appendChild(infoTr);
+  calcTotal();
+}
+
+// ============================================================
+// GRID INPUT — Keyboard Navigation (Tab / Enter) & Excel Paste
+// ============================================================
+function handleGridKeydown(e) {
+  const input = e.target;
+  if (input.tagName !== 'INPUT') return;
+  const row = input.closest('tr');
+  if (!row || !row.id?.startsWith('temp-item-') || row.id.includes('-info')) return;
+  if (e.key !== 'Tab' && e.key !== 'Enter') return;
+  e.preventDefault();
+
+  const inputs  = Array.from(row.querySelectorAll('input'));
+  const colIdx  = inputs.indexOf(input);
+
+  if (e.key === 'Tab' && !e.shiftKey) {
+    if (colIdx < inputs.length - 1) { inputs[colIdx + 1].focus(); return; }
+    const nextRow = _getNextGridRow(row);
+    if (nextRow) { nextRow.querySelectorAll('input')[0]?.focus(); }
+    else { addTempItem(); _focusLastRow(0); }
+  } else if (e.key === 'Tab' && e.shiftKey) {
+    if (colIdx > 0) { inputs[colIdx - 1].focus(); return; }
+    const prevRow = _getPrevGridRow(row);
+    if (prevRow) { const pi = prevRow.querySelectorAll('input'); pi[pi.length - 1]?.focus(); }
+  } else if (e.key === 'Enter') {
+    const nextRow = _getNextGridRow(row);
+    if (nextRow) { nextRow.querySelectorAll('input')[colIdx]?.focus(); }
+    else { addTempItem(); _focusLastRow(colIdx); }
+  }
+}
+
+function _getNextGridRow(row) {
+  let next = row.nextElementSibling;
+  while (next) {
+    if (next.id?.startsWith('temp-item-') && !next.id.includes('-info')) return next;
+    next = next.nextElementSibling;
+  }
+  return null;
+}
+
+function _getPrevGridRow(row) {
+  let prev = row.previousElementSibling;
+  while (prev) {
+    if (prev.id?.startsWith('temp-item-') && !prev.id.includes('-info')) return prev;
+    prev = prev.previousElementSibling;
+  }
+  return null;
+}
+
+function _focusLastRow(colIdx) {
+  setTimeout(() => {
+    const tbody = document.getElementById('temp-items-body');
+    if (!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll('tr[id^="temp-item-"]:not([id*="-info"])'));
+    const last = rows[rows.length - 1];
+    if (last) last.querySelectorAll('input')[colIdx]?.focus();
+  }, 30);
+}
+
+function handleGridPaste(e) {
+  const input = e.target;
+  if (input.tagName !== 'INPUT') return;
+  const row = input.closest('tr');
+  if (!row || !row.id?.startsWith('temp-item-') || row.id.includes('-info')) return;
+
+  const pasteText = (e.clipboardData || window.clipboardData).getData('text');
+  const lines = pasteText.split(/\r?\n/).filter(l => l.trim() !== '');
+  // Single value with no tabs → let browser handle normally
+  if (lines.length <= 1 && !pasteText.includes('\t')) return;
+  e.preventDefault();
+
+  const tbody    = document.getElementById('temp-items-body');
+  const startInputs = Array.from(row.querySelectorAll('input'));
+  const startCol    = startInputs.indexOf(input);
+
+  lines.forEach((line, lineIdx) => {
+    const cells = line.split('\t');
+    // Re-query rows each iteration because addTempItem mutates the DOM
+    let allRows = Array.from(tbody.querySelectorAll('tr[id^="temp-item-"]:not([id*="-info"])'));
+    const startRowIdx = allRows.indexOf(row);
+    const targetIdx   = startRowIdx + lineIdx;
+    if (targetIdx >= allRows.length) {
+      addTempItem();
+      allRows = Array.from(tbody.querySelectorAll('tr[id^="temp-item-"]:not([id*="-info"])'));
+    }
+    const targetRow = allRows[targetIdx];
+    if (!targetRow) return;
+    const rowInputs = Array.from(targetRow.querySelectorAll('input'));
+    cells.forEach((cell, ci) => {
+      const inp = rowInputs[startCol + ci];
+      if (!inp) return;
+      inp.value = cell.trim();
+      inp.dispatchEvent(new Event('change', { bubbles: true }));
+      inp.dispatchEvent(new Event('input',  { bubbles: true }));
+    });
+  });
   calcTotal();
 }
 
@@ -1031,11 +1171,14 @@ async function renderWHSearch(body, topbar) {
 }
 
 function whSearchFilter() {
-  const q = document.getElementById('wh-search-input').value.trim().toLowerCase();
+  const rawSearch = document.getElementById('wh-search-input').value.trim();
+  const terms = rawSearch.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
   const resultsEl = document.getElementById('wh-search-results');
-  if (!q) { resultsEl.innerHTML = ''; return; }
-  const matches = _allPOHeaders.filter(p => p.po_number.toLowerCase().includes(q) || p.project_name.toLowerCase().includes(q)).slice(0, 5);
-  if (!matches.length) { resultsEl.innerHTML = `<div class="alert alert-amber"><span class="alert-icon">⚠</span><div class="alert-body"><p>ไม่พบ PO ที่ตรงกับ "${q}"</p></div></div>`; return; }
+  if (!terms.length) { resultsEl.innerHTML = ''; return; }
+  const matches = _allPOHeaders.filter(p =>
+    terms.some(term => p.po_number.toLowerCase().includes(term) || p.project_name.toLowerCase().includes(term))
+  ).slice(0, 10);
+  if (!matches.length) { resultsEl.innerHTML = `<div class="alert alert-amber"><span class="alert-icon">⚠</span><div class="alert-body"><p>ไม่พบ PO ที่ตรงกับ "${rawSearch}"</p></div></div>`; return; }
   resultsEl.innerHTML = matches.map(po => `
     <div style="border:1px solid #e2e8f0;border-radius:10px;padding:14px 18px;margin-bottom:8px;display:flex;align-items:center;gap:12px;cursor:pointer" onclick="goReceive('${po.po_number}')" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
       <div style="flex:1"><div class="po-number-tag">${po.po_number}</div><div class="text-sm text-muted">${po.project_name}</div></div>
@@ -1053,7 +1196,8 @@ async function goReceive(poNumber) {
 // ============================================================
 // WAREHOUSE — RECEIVE & QC
 // ============================================================
-let photoFiles = {}; // {idx: [File, ...]}
+let photoFiles = {};        // {idx: [File, ...]} — per-SKU photos
+let poLevelPhotoFiles = []; // PO-level evidence photos (not tied to any SKU)
 
 async function renderWHReceive(body, topbar) {
   let po = receivingPO;
@@ -1065,6 +1209,11 @@ async function renderWHReceive(body, topbar) {
   const items = po.items || [];
   const logs = po.logs || [];
   photoFiles = {};
+  poLevelPhotoFiles = [];
+
+  // Load existing PO-level evidence images
+  let existingPOImages = [];
+  try { existingPOImages = await API.get(`/po/${po.po_number}/images`); } catch { /* optional */ }
 
   topbar.innerHTML = `
     <div class="topbar-left"><h2>📦 รับสินค้า & QC</h2><p><span class="po-number-tag">${po.po_number}</span> — ${po.project_name}</p></div>
@@ -1163,6 +1312,32 @@ async function renderWHReceive(body, topbar) {
     </div>
     ${itemForms}
     <div class="card">
+      <div class="card-title mb-4">📸 รูปภาพหลักฐานการรับสินค้า (รวม PO)</div>
+      <p class="text-sm text-muted mb-3" style="margin-bottom:12px">ถ่ายรูปรวมสินค้าของ PO นี้ได้เลย ไม่ต้องผูกกับ SKU ใดๆ</p>
+      <div class="photo-upload-area"
+        onclick="document.getElementById('po-level-upload').click()"
+        ondragover="event.preventDefault();this.classList.add('drag')"
+        ondragleave="this.classList.remove('drag')"
+        ondrop="handlePOLevelDrop(event)">
+        <input type="file" id="po-level-upload" accept="image/*" multiple
+          onchange="handlePOLevelUpload(this)" style="display:none">
+        <div class="upload-icon">📷</div>
+        <p>คลิกหรือลากวางรูปที่นี่</p>
+        <small>รูปรวม PO — JPG, PNG, WEBP — ไม่เกิน 5MB</small>
+      </div>
+      <div class="photo-preview-grid" id="po-level-preview"></div>
+      ${existingPOImages.length ? `
+      <div style="margin-top:16px">
+        <div class="text-sm" style="font-weight:600;margin-bottom:8px;color:#374151">📌 รูปที่บันทึกแล้ว (${existingPOImages.length} รูป)</div>
+        <div class="photo-preview-grid">${existingPOImages.map(img => `
+          <div class="photo-preview-item">
+            <img src="${img.photo_url}" onclick="window.open('${img.photo_url}','_blank')" style="cursor:zoom-in">
+            <button class="remove-photo" onclick="deletePOImage(${img.id})" title="ลบรูป">✕</button>
+          </div>`).join('')}
+        </div>
+      </div>` : ''}
+    </div>
+    <div class="card">
       <div class="card-title mb-4">📌 อัปเดตสถานะ PO</div>
       <div class="form-group" style="max-width:300px">
         <label>สถานะหลังรับสินค้า</label>
@@ -1226,6 +1401,35 @@ function renderPhotoPreviews(idx) {
 }
 function removePhoto(idx, i) { photoFiles[idx].splice(i, 1); renderPhotoPreviews(idx); }
 
+// PO-level evidence photo handlers
+function handlePOLevelUpload(input) {
+  poLevelPhotoFiles.push(...Array.from(input.files));
+  renderPOLevelPreviews();
+}
+function handlePOLevelDrop(event) {
+  event.preventDefault();
+  event.currentTarget.classList.remove('drag');
+  poLevelPhotoFiles.push(...Array.from(event.dataTransfer.files).filter(f => f.type.startsWith('image/')));
+  renderPOLevelPreviews();
+}
+function renderPOLevelPreviews() {
+  const grid = document.getElementById('po-level-preview');
+  if (!grid) return;
+  grid.innerHTML = poLevelPhotoFiles.map((f, i) => {
+    const url = URL.createObjectURL(f);
+    return `<div class="photo-preview-item"><img src="${url}"><button class="remove-photo" onclick="removePOLevelPhoto(${i})">✕</button></div>`;
+  }).join('');
+}
+function removePOLevelPhoto(i) { poLevelPhotoFiles.splice(i, 1); renderPOLevelPreviews(); }
+async function deletePOImage(id) {
+  if (!confirm('ลบรูปนี้ออกจากระบบถาวร?')) return;
+  try {
+    await API.deletePOImage(id);
+    toast('ลบรูปสำเร็จ', 'success');
+    navigate('wh-receive'); // Re-render to refresh gallery
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 async function saveReceiving() {
   const po = receivingPO; if (!po) return;
   const items = po.items || [];
@@ -1269,7 +1473,13 @@ async function saveReceiving() {
   try {
     if (btn) { btn.disabled = true; btn.textContent = 'กำลังบันทึก...'; }
     await API.post('/receiving', { po_number: po.po_number, logs, new_status });
+    // Upload PO-level evidence photos (not tied to any SKU)
+    if (poLevelPhotoFiles.length) {
+      try { await API.uploadPOImages(po.po_number, poLevelPhotoFiles); }
+      catch (e) { console.warn('PO image upload warning:', e.message); }
+    }
     photoFiles = {};
+    poLevelPhotoFiles = [];
     toast(`บันทึกการรับสินค้า ${po.po_number} สำเร็จ!`, 'success');
     navigate('wh-search');
   } catch (err) {

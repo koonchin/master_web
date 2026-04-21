@@ -493,6 +493,54 @@ app.get('/api/export', async (req, res) => {
 });
 
 // ============================================================
+// PO IMAGES (Flexible Evidence Upload — not tied to any SKU)
+// ============================================================
+
+// GET /api/po/:poNumber/images
+app.get('/api/po/:poNumber/images', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM po_images WHERE po_number = ? ORDER BY uploaded_at ASC',
+      [req.params.poNumber]
+    );
+    res.json(rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/po/:poNumber/images — upload PO-level evidence photos
+app.post('/api/po/:poNumber/images', upload.array('photos', 20), async (req, res) => {
+  try {
+    const { poNumber } = req.params;
+    if (!req.files || req.files.length === 0)
+      return res.status(400).json({ error: 'No files uploaded' });
+    const urls = req.files.map(f => `/uploads/${f.filename}`);
+    for (const url of urls) {
+      await pool.query(
+        'INSERT INTO po_images (po_number, photo_url) VALUES (?,?)',
+        [poNumber, url]
+      );
+    }
+    const [rows] = await pool.query(
+      'SELECT * FROM po_images WHERE po_number = ? ORDER BY uploaded_at ASC',
+      [poNumber]
+    );
+    res.status(201).json({ urls, images: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/po-images/:id — remove one evidence photo
+app.delete('/api/po-images/:id', async (req, res) => {
+  try {
+    const [[img]] = await pool.query('SELECT * FROM po_images WHERE id = ?', [req.params.id]);
+    if (!img) return res.status(404).json({ error: 'Image not found' });
+    const filePath = path.join(__dirname, img.photo_url.replace(/^\//, ''));
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    await pool.query('DELETE FROM po_images WHERE id = ?', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ============================================================
 // START SERVER
 // ============================================================
 app.listen(PORT, async () => {

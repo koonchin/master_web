@@ -44,6 +44,12 @@ const statements = [
   `ALTER TABLE po_items ADD COLUMN estimated_volume   DECIMAL(10,4) DEFAULT 0`,
   `ALTER TABLE po_items ADD COLUMN selected_logistics VARCHAR(100)  DEFAULT NULL`,
   `ALTER TABLE po_items ADD COLUMN shipping_cost      DECIMAL(10,2) DEFAULT NULL`,
+  `CREATE TABLE IF NOT EXISTS po_images (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    po_number   VARCHAR(50)  NOT NULL,
+    photo_url   VARCHAR(500) NOT NULL,
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`,
 ];
 
 (async () => {
