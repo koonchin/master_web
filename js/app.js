@@ -3,7 +3,8 @@
 // API-backed version (Node.js + MySQL)
 // ============================================================
 
-const API_BASE = 'http://localhost:4002/api';
+// const API_BASE = 'http://localhost:4002/api';
+const API_BASE = '/api';
 
 // --- State ---
 let currentRole = 'purchase';
