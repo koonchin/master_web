@@ -282,22 +282,32 @@ async function renderDashboard(body, topbar) {
   if (dashFilter.logistics_company) filtered = filtered.filter(p => p.logistics_company === dashFilter.logistics_company);
   if (dashFilter.shipping_method)   filtered = filtered.filter(p => p.shipping_method   === dashFilter.shipping_method);
 
-  const totalPO    = filtered.length;
-  const shippedCN  = filtered.filter(p => p.status === 'Shipped_CN').length;
-  const customs    = filtered.filter(p => p.status === 'Thai_Customs').length;
-  const overdueList= filtered.filter(p => isOverdue(p));
-  const arrived    = filtered.filter(p => p.status === 'Arrived').length;
-  const completed  = filtered.filter(p => p.status === 'Completed').length;
+  const totalPO       = filtered.length;
+  const shippedCN     = filtered.filter(p => p.status === 'Shipped_CN').length;
+  const customs       = filtered.filter(p => p.status === 'Thai_Customs').length;
+  const overdueList   = filtered.filter(p => isOverdue(p));
+  const arrived       = filtered.filter(p => p.status === 'Arrived').length;
+  const completed     = filtered.filter(p => p.status === 'Completed').length;
+  const discrepancies = filtered.filter(p => p.discrepancy_count > 0 && !p.discrepancy_ack).length;
 
   const filterLabel = hasFilter ? ` <span style="font-size:12px;color:#64748b;font-weight:400">(ตัวกรองใช้งานอยู่)</span>` : '';
 
   let overdueAlert = '';
   if (overdueList.length) {
     const names = overdueList.map(p => `<strong>${p.po_number}</strong>`).join(', ');
-    overdueAlert = `<div class="alert alert-red">
+    overdueAlert += `<div class="alert alert-red">
       <span class="alert-icon">🚨</span>
       <div class="alert-body"><div class="alert-title">พบ ${overdueList.length} PO ที่เลยกำหนดส่ง!</div><p>${names}</p></div>
       <button class="btn-danger btn-sm" style="margin-left:auto;white-space:nowrap" onclick="filterAndShowOverdue()">ดูรายละเอียด</button>
+    </div>`;
+  }
+  const discrepancyList = filtered.filter(p => p.discrepancy_count > 0 && !p.discrepancy_ack);
+  if (discrepancyList.length) {
+    const names = discrepancyList.map(p => `<strong>${p.po_number}</strong>`).join(', ');
+    overdueAlert += `<div class="alert alert-amber">
+      <span class="alert-icon">⚠️</span>
+      <div class="alert-body"><div class="alert-title">พบ ${discrepancyList.length} PO ที่มีความคลาดเคลื่อน — รอ claim กับ factory</div><p>${names}</p></div>
+      <button class="btn-secondary btn-sm" style="margin-left:auto;white-space:nowrap" onclick="filterAndShowDiscrepancy()">ดูทั้งหมด</button>
     </div>`;
   }
 
@@ -349,6 +359,13 @@ async function renderDashboard(body, topbar) {
         <div class="stat-card-sub">เลยกำหนด ETA</div>
         ${overdueList.length > 0 ? '<span class="trend red">ต้องติดตาม!</span>' : ''}
       </div>
+      <div class="stat-card ${discrepancies > 0 ? 'warning' : ''}" onclick="filterAndShowDiscrepancy()">
+        <div class="stat-card-icon" style="background:#fffbeb">🚨</div>
+        <div class="stat-card-value" style="color:${discrepancies ? '#d97706' : '#21373C'}">${discrepancies}</div>
+        <div class="stat-card-label">คลาดเคลื่อน</div>
+        <div class="stat-card-sub">รอ claim / acknowledge</div>
+        ${discrepancies > 0 ? '<span class="trend amber">ต้อง claim!</span>' : ''}
+      </div>
       <div class="stat-card" onclick="filterStatus('Arrived')">
         <div class="stat-card-icon" style="background:#ecfdf5">📦</div>
         <div class="stat-card-value">${arrived}</div>
@@ -379,6 +396,14 @@ function filterAndShowOverdue() {
   navigate('po-list');
   setTimeout(() => { const sel = document.getElementById('filter-status'); if (sel) { sel.value = '__overdue__'; applyPOListFilter(); } }, 100);
 }
+function filterAndShowDiscrepancy() {
+  navigate('po-list');
+  setTimeout(() => { const sel = document.getElementById('filter-status'); if (sel) { sel.value = '__discrepancy__'; applyPOListFilter(); } }, 100);
+}
+function filterDiscrepancy(event) {
+  event.stopPropagation();
+  filterAndShowDiscrepancy();
+}
 
 // ============================================================
 // PO LIST
@@ -399,7 +424,7 @@ async function renderPOList(body, topbar) {
           <span class="icon">🔍</span>
           <input type="text" id="search-po" placeholder="ค้นหา PO, Project, SKU... (คั่นด้วย , เพื่อค้นหาหลายรายการ)" oninput="applyPOListFilter()">
         </div>
-        <select class="form-control" id="filter-status" style="width:180px" onchange="applyPOListFilter()">
+        <select class="form-control" id="filter-status" style="width:200px" onchange="applyPOListFilter()">
           <option value="">ทุกสถานะ</option>
           <option value="Draft">Draft</option>
           <option value="Ordered">Ordered</option>
@@ -408,6 +433,7 @@ async function renderPOList(body, topbar) {
           <option value="Arrived">Arrived</option>
           <option value="Completed">Completed</option>
           <option value="__overdue__">⚠ Overdue เท่านั้น</option>
+          <option value="__discrepancy__">🚨 คลาดเคลื่อน (ยังไม่ acknowledge)</option>
         </select>
         <span class="text-muted text-sm ml-auto" id="po-count"></span>
       </div>
@@ -428,9 +454,10 @@ function applyPOListFilter() {
   const statusFilter = document.getElementById('filter-status')?.value || '';
   let headers = [..._allPOHeaders];
 
-  // Filter by status
-  if (statusFilter === '__overdue__') headers = headers.filter(p => isOverdue(p));
-  else if (statusFilter) headers = headers.filter(p => p.status === statusFilter);
+  // Filter by status / special filters
+  if      (statusFilter === '__overdue__')      headers = headers.filter(p => isOverdue(p));
+  else if (statusFilter === '__discrepancy__')  headers = headers.filter(p => p.discrepancy_count > 0 && !p.discrepancy_ack);
+  else if (statusFilter)                        headers = headers.filter(p => p.status === statusFilter);
 
   // Multi-term search: PO number, project name, OR any SKU
   // A PO matches if ANY search term matches any field
@@ -478,15 +505,18 @@ function applyPOListFilter() {
       skuCell = `<span class="text-muted text-sm">${(po.skus || []).length} SKU</span>`;
     }
 
-    return `<tr class="${overdue ? 'overdue-row' : ''}">
-      <td><span class="po-number-tag">${po.po_number}</span></td>
+    const hasDiscrepancy = po.discrepancy_count > 0 && !po.discrepancy_ack;
+    const discBadge = hasDiscrepancy
+      ? `<span style="margin-left:6px;display:inline-flex;align-items:center;gap:3px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;padding:2px 7px;border-radius:99px;border:1px solid #fcd34d;cursor:pointer" onclick="filterDiscrepancy(event)" title="คลิกเพื่อดู PO ที่คลาดเคลื่อนทั้งหมด">⚠ คลาดเคลื่อน</span>` : '';
+    return `<tr class="${overdue ? 'overdue-row' : ''}" style="cursor:pointer" onclick="viewPODetail('${po.po_number}')">
+      <td><span class="po-number-tag">${po.po_number}</span>${discBadge}</td>
       <td>${po.project_name}</td>
       <td>${skuCell}</td>
       <td class="td-muted">${formatDate(po.order_date)}</td>
       <td>${statusBadge(po.status, overdue)}</td>
       <td>${eta ? `<span style="color:${overdue ? '#dc2626' : ''};font-weight:${overdue ? '700' : '400'}">${formatDate(eta)}</span>` : '<span class="td-muted">-</span>'}</td>
       <td class="td-muted">${po.est_lead_time} วัน</td>
-      <td><div class="flex gap-2">
+      <td><div class="flex gap-2" onclick="event.stopPropagation()">
         <button class="btn-secondary btn-sm" onclick="viewPODetail('${po.po_number}')">ดูรายละเอียด</button>
         ${currentRole === 'purchase' ? `
           <button class="btn-primary btn-sm" onclick="openEditStatusModal('${po.po_number}')">อัปเดต</button>
