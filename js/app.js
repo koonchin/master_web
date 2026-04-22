@@ -111,8 +111,8 @@ function qcDone(log) {
 
 // --- Loading ---
 function showLoading(body) {
-  body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:300px;gap:12px;color:#64748b">
-    <div style="width:32px;height:32px;border:3px solid #e2e8f0;border-top-color:#3b82f6;border-radius:50%;animation:spin .6s linear infinite"></div>
+  body.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:300px;gap:12px;color:#5a6e72">
+    <div style="width:32px;height:32px;border:3px solid rgba(33,55,60,.12);border-top-color:#8FACD7;border-radius:50%;animation:spin .6s linear infinite"></div>
     <span style="font-size:16px">กำลังโหลดข้อมูล...</span>
   </div>`;
 }
@@ -313,7 +313,7 @@ async function renderDashboard(body, topbar) {
       <td>${po.project_name}</td>
       <td>${statusBadge(po.status, overdue)}</td>
       <td class="td-muted">${formatDate(po.departure_date)}</td>
-      <td>${eta ? `<div class="eta-bar"><div class="eta-progress"><div class="eta-progress-fill" style="width:${progress}%;background:${overdue ? '#ef4444' : progress > 80 ? '#f59e0b' : '#3b82f6'}"></div></div><span class="eta-text" style="color:${overdue ? '#dc2626' : ''}">${formatDate(eta)}</span></div>` : '<span class="text-muted">ยังไม่ระบุ</span>'}</td>
+      <td>${eta ? `<div class="eta-bar"><div class="eta-progress"><div class="eta-progress-fill" style="width:${progress}%;background:${overdue ? '#ef4444' : progress > 80 ? '#f59e0b' : '#8FACD7'}"></div></div><span class="eta-text" style="color:${overdue ? '#dc2626' : ''}">${formatDate(eta)}</span></div>` : '<span class="text-muted">ยังไม่ระบุ</span>'}</td>
     </tr>`;
   }).join('') : `<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📭</div><p>ไม่มี PO ที่กำลังดำเนินการ</p></div></td></tr>`;
 
@@ -342,7 +342,7 @@ async function renderDashboard(body, topbar) {
       </div>
       <div class="stat-card ${overdueList.length > 0 ? 'overdue' : ''}" onclick="filterAndShowOverdue()">
         <div class="stat-card-icon" style="background:#fff5f5">⚠️</div>
-        <div class="stat-card-value" style="color:${overdueList.length ? '#dc2626' : '#1e293b'}">${overdueList.length}</div>
+        <div class="stat-card-value" style="color:${overdueList.length ? '#dc2626' : '#21373C'}">${overdueList.length}</div>
         <div class="stat-card-label">Overdue / Delay</div>
         <div class="stat-card-sub">เลยกำหนด ETA</div>
         ${overdueList.length > 0 ? '<span class="trend red">ต้องติดตาม!</span>' : ''}
@@ -549,7 +549,7 @@ async function renderPODetail(body, topbar) {
     // SKU cell: for warehouse + material, show carton info prominently
     const skuCell = (!isPurchase && isMaterial && item.shipping_cartons > 0)
       ? `<div class="font-mono" style="font-weight:600">${item.sku}</div>
-         <div style="font-size:12px;color:#3b82f6;margin-top:2px">📦 ${item.shipping_cartons.toLocaleString()} ลัง</div>`
+         <div style="font-size:12px;color:#8FACD7;margin-top:2px">📦 ${item.shipping_cartons.toLocaleString()} ลัง</div>`
       : `<span class="font-mono">${item.sku}</span>`;
 
     // Purchase-only columns
@@ -571,29 +571,29 @@ async function renderPODetail(body, topbar) {
     </tr>`;
   }).join('');
 
-  const etaBar = eta ? `<div class="eta-bar" style="margin-top:8px"><div class="eta-progress"><div class="eta-progress-fill" style="width:${etaProgress(po)}%;background:${overdue ? '#ef4444' : '#3b82f6'}"></div></div><span class="eta-text">${etaProgress(po)}%</span></div>` : '';
+  const etaBar = eta ? `<div class="eta-bar" style="margin-top:8px"><div class="eta-progress"><div class="eta-progress-fill" style="width:${etaProgress(po)}%;background:${overdue ? '#ef4444' : '#8FACD7'}"></div></div><span class="eta-text">${etaProgress(po)}%</span></div>` : '';
 
   body.innerHTML = `
     ${overdue ? `<div class="alert alert-red"><span class="alert-icon">🚨</span><div class="alert-body"><div class="alert-title">PO นี้เลยกำหนด ETA แล้ว!</div><p>ETA: ${formatDate(eta)}</p></div></div>` : ''}
     <div class="card">
       <div class="card-header"><div class="card-title">🗺 สถานะการขนส่ง</div>${statusBadge(po.status, overdue)}</div>
       <div class="status-progress">${stepsHTML}</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:16px;margin-top:20px;padding-top:20px;border-top:1px solid #e2e8f0">
-        <div><label style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:600;display:block;margin-bottom:3px">PO Number</label><span class="po-number-tag">${po.po_number}</span></div>
-        <div><label style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:600;display:block;margin-bottom:3px">Project</label><span style="font-weight:600">${po.project_name}</span></div>
-        <div><label style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:600;display:block;margin-bottom:3px">Order Date</label><span>${formatDate(po.order_date)}</span></div>
-        <div><label style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:600;display:block;margin-bottom:3px">บริษัทขนส่ง</label><span>${po.logistics_company || '<span class="text-muted">-</span>'}</span></div>
-        <div><label style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:600;display:block;margin-bottom:3px">วิธีขนส่ง</label><span>${po.shipping_method ? (po.shipping_method === 'รถ' ? '🚛 รถ' : '🚢 เรือ') : '<span class="text-muted">-</span>'}</span></div>
-        <div><label style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:600;display:block;margin-bottom:3px">Departure</label><span>${formatDate(po.departure_date)}</span></div>
-        <div><label style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:600;display:block;margin-bottom:3px">Lead Time</label><span>${po.est_lead_time} วัน</span></div>
-        <div><label style="font-size:11px;text-transform:uppercase;color:#64748b;font-weight:600;display:block;margin-bottom:3px">ETA</label><span style="color:${overdue ? '#dc2626' : '#1e293b'};font-weight:${overdue ? '700' : '400'}">${formatDate(eta)}</span>${etaBar}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:16px;margin-top:20px;padding-top:20px;border-top:1px solid rgba(33,55,60,.09)">
+        <div><label style="font-size:11px;text-transform:uppercase;color:#5a6e72;font-weight:600;display:block;margin-bottom:3px">PO Number</label><span class="po-number-tag">${po.po_number}</span></div>
+        <div><label style="font-size:11px;text-transform:uppercase;color:#5a6e72;font-weight:600;display:block;margin-bottom:3px">Project</label><span style="font-weight:600">${po.project_name}</span></div>
+        <div><label style="font-size:11px;text-transform:uppercase;color:#5a6e72;font-weight:600;display:block;margin-bottom:3px">Order Date</label><span>${formatDate(po.order_date)}</span></div>
+        <div><label style="font-size:11px;text-transform:uppercase;color:#5a6e72;font-weight:600;display:block;margin-bottom:3px">บริษัทขนส่ง</label><span>${po.logistics_company || '<span class="text-muted">-</span>'}</span></div>
+        <div><label style="font-size:11px;text-transform:uppercase;color:#5a6e72;font-weight:600;display:block;margin-bottom:3px">วิธีขนส่ง</label><span>${po.shipping_method ? (po.shipping_method === 'รถ' ? '🚛 รถ' : '🚢 เรือ') : '<span class="text-muted">-</span>'}</span></div>
+        <div><label style="font-size:11px;text-transform:uppercase;color:#5a6e72;font-weight:600;display:block;margin-bottom:3px">Departure</label><span>${formatDate(po.departure_date)}</span></div>
+        <div><label style="font-size:11px;text-transform:uppercase;color:#5a6e72;font-weight:600;display:block;margin-bottom:3px">Lead Time</label><span>${po.est_lead_time} วัน</span></div>
+        <div><label style="font-size:11px;text-transform:uppercase;color:#5a6e72;font-weight:600;display:block;margin-bottom:3px">ETA</label><span style="color:${overdue ? '#dc2626' : '#21373C'};font-weight:${overdue ? '700' : '400'}">${formatDate(eta)}</span>${etaBar}</div>
       </div>
     </div>
     <div class="card p-0">
       <div class="card-header" style="padding:20px 24px 16px">
         <div><div class="card-title">📦 รายการสินค้า (${items.length} SKU)</div><div class="card-subtitle">เปรียบเทียบสั่ง vs รับจริง vs QC</div></div>
       </div>
-      <div class="table-wrap" style="border:none;border-top:1px solid #e2e8f0">
+      <div class="table-wrap" style="border:none;border-top:1px solid rgba(33,55,60,.09)">
         <table>
           <thead><tr><th>SKU</th><th style="text-align:right">Order QTY</th><th style="text-align:right">Receive QTY</th><th style="text-align:right">Check Diff</th><th style="text-align:right">Pass QC</th><th style="text-align:right">Not Pass</th><th>หมายเหตุจัดซื้อ</th><th>หมายเหตุคลัง</th>${isPurchase ? '<th style="text-align:right">ลัง</th><th style="text-align:right">น้ำหนัก</th><th style="text-align:right">ค่าขนส่ง</th>' : ''}</tr></thead>
           <tbody>${itemRows || `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📦</div><p>ยังไม่มีรายการสินค้า</p></div></td></tr>`}</tbody>
@@ -622,7 +622,7 @@ async function renderPODetail(body, topbar) {
       const warnV     = pctV !== null && Math.abs(+pctV) > 5;
       const hasSystem = sysWeight > 0 || sysVolume > 0;
       const compTable = hasSystem ? `
-        <div class="table-wrap" style="margin-top:12px;border:1px solid #e2e8f0;border-radius:10px">
+        <div class="table-wrap" style="margin-top:12px;border:1px solid rgba(33,55,60,.10);border-radius:10px">
           <table>
             <thead><tr><th>ประเภท</th><th style="text-align:right">System (คำนวณ)</th><th style="text-align:right">Billed (ขนส่งเรียก)</th><th style="text-align:right">ส่วนต่าง</th><th style="text-align:right">%</th></tr></thead>
             <tbody>
@@ -764,7 +764,7 @@ async function renderCreatePO(body, topbar) {
     <div class="flex gap-3" style="justify-content:flex-end">
       <button class="btn-secondary" onclick="navigate('po-list')">ยกเลิก</button>
       <button class="btn-primary" onclick="savePO('Draft')">💾 บันทึกเป็น Draft</button>
-      <button class="btn-primary" style="background:#059669" onclick="savePO('Ordered')">✅ บันทึก & สั่งซื้อ</button>
+      <button class="btn-primary" style="background:#1a6348" onclick="savePO('Ordered')">✅ บันทึก & สั่งซื้อ</button>
     </div>`;
 
   tempItemCount = 1; calcTotal();
@@ -1259,7 +1259,7 @@ function whSearchFilter() {
   ).slice(0, 10);
   if (!matches.length) { resultsEl.innerHTML = `<div class="alert alert-amber"><span class="alert-icon">⚠</span><div class="alert-body"><p>ไม่พบ PO ที่ตรงกับ "${rawSearch}"</p></div></div>`; return; }
   resultsEl.innerHTML = matches.map(po => `
-    <div style="border:1px solid #e2e8f0;border-radius:10px;padding:14px 18px;margin-bottom:8px;display:flex;align-items:center;gap:12px;cursor:pointer" onclick="goReceive('${po.po_number}')" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+    <div style="border:1px solid rgba(33,55,60,.10);border-radius:10px;padding:14px 18px;margin-bottom:8px;display:flex;align-items:center;gap:12px;cursor:pointer;background:#fff" onclick="goReceive('${po.po_number}')" onmouseover="this.style.background='#EAE5D8'" onmouseout="this.style.background='#fff'">
       <div style="flex:1"><div class="po-number-tag">${po.po_number}</div><div class="text-sm text-muted">${po.project_name}</div></div>
       ${statusBadge(po.status, isOverdue(po))}
       <button class="btn-primary btn-sm">เลือก →</button>
@@ -1304,7 +1304,7 @@ async function renderWHReceive(body, topbar) {
     const receiveUnit  = isMaterial ? 'ลัง' : 'ชิ้น';
     // For material: display qty-block shows cartons, sub shows pieces
     const qtyBlockHtml = expectedCartons
-      ? `<div class="qty-block"><span class="qty-main" style="color:#3b82f6">${expectedCartons.toLocaleString()}</span><span class="qty-sub">ลัง (${item.order_qty.toLocaleString()} ชิ้น)</span></div>`
+      ? `<div class="qty-block"><span class="qty-main" style="color:#8FACD7">${expectedCartons.toLocaleString()}</span><span class="qty-sub">ลัง (${item.order_qty.toLocaleString()} ชิ้น)</span></div>`
       : `<div class="qty-block"><span class="qty-main">${item.order_qty.toLocaleString()}</span><span class="qty-sub">Order QTY (ชิ้น)</span></div>`;
 
     return `
@@ -1414,7 +1414,7 @@ async function renderWHReceive(body, topbar) {
     </div>
     <div class="flex gap-3" style="justify-content:flex-end">
       <button class="btn-secondary" onclick="navigate('wh-search')">ยกเลิก</button>
-      <button class="btn-primary" id="save-receiving-btn" style="background:#059669" onclick="saveReceiving()">💾 บันทึกการรับสินค้าทั้งหมด</button>
+      <button class="btn-primary" id="save-receiving-btn" style="background:#1a6348" onclick="saveReceiving()">💾 บันทึกการรับสินค้าทั้งหมด</button>
     </div>`;
 }
 
@@ -1666,7 +1666,7 @@ function openItemMasterModal(item) {
   if (preview) {
     preview.innerHTML = item?.measurement_photo_url
       ? `<div style="display:flex;align-items:center;gap:10px">
-           <img src="${item.measurement_photo_url}" style="height:60px;border-radius:6px;cursor:zoom-in;border:1px solid #e2e8f0" onclick="window.open('${item.measurement_photo_url}','_blank')">
+           <img src="${item.measurement_photo_url}" style="height:60px;border-radius:6px;cursor:zoom-in;border:1px solid rgba(33,55,60,.10)" onclick="window.open('${item.measurement_photo_url}','_blank')">
            <span class="text-sm text-muted">รูปปัจจุบัน (เลือกไฟล์ใหม่เพื่อเปลี่ยน)</span>
          </div>`
       : '';

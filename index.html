@@ -6,8 +6,11 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="theme-color" content="#1e293b">
+  <meta name="theme-color" content="#21373C">
   <title>PO Tracking — Muslin Pajamas</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -17,10 +20,22 @@
   <!-- ========== SIDEBAR ========== -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <div class="logo-icon">📦</div>
-      <div>
-        <h1>PO Tracking</h1>
-        <p>Muslin Pajamas</p>
+      <!-- MUSLIN botanical logomark -->
+      <div class="sidebar-logo" aria-hidden="true">
+        <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="20" cy="20" r="18" stroke="rgba(234,229,216,0.25)" stroke-width="1"/>
+          <!-- Leaves -->
+          <path d="M20 8 C20 8 14 14 14 20 C14 26 20 30 20 30" stroke="rgba(234,229,216,0.55)" stroke-width="1" fill="none" stroke-linecap="round"/>
+          <path d="M20 8 C20 8 26 14 26 20 C26 26 20 30 20 30" stroke="rgba(234,229,216,0.55)" stroke-width="1" fill="none" stroke-linecap="round"/>
+          <path d="M20 14 C20 14 13 17 11 22" stroke="rgba(234,229,216,0.35)" stroke-width="0.8" fill="none" stroke-linecap="round"/>
+          <path d="M20 14 C20 14 27 17 29 22" stroke="rgba(234,229,216,0.35)" stroke-width="0.8" fill="none" stroke-linecap="round"/>
+          <circle cx="20" cy="20" r="2.5" fill="rgba(143,172,215,0.6)"/>
+        </svg>
+      </div>
+      <div class="sidebar-brand">
+        <div class="sidebar-brand-name">MUSLIN</div>
+        <div class="sidebar-brand-sub">NOT JUST PAJAMAS</div>
+        <div class="sidebar-brand-sys">PO Tracking System</div>
       </div>
       <button class="sidebar-close-btn" onclick="closeSidebar()" aria-label="Close menu">✕</button>
     </div>
@@ -65,6 +80,9 @@
         </button>
       </div>
     </nav>
+
+    <!-- Brand tagline -->
+    <div class="sidebar-tagline">Comfort you can live in.</div>
   </aside>
 
   <!-- Sidebar backdrop (mobile) -->
