@@ -58,9 +58,11 @@ app.get('/api/po', async (req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT ph.*,
-        GROUP_CONCAT(pi.sku ORDER BY pi.sku SEPARATOR '|') AS skus
+        GROUP_CONCAT(DISTINCT pi.sku ORDER BY pi.sku SEPARATOR '|') AS skus,
+        SUM(CASE WHEN rl.sku IS NOT NULL AND rl.receive_qty <> pi.order_qty THEN 1 ELSE 0 END) AS discrepancy_count
       FROM po_headers ph
       LEFT JOIN po_items pi ON ph.po_number = pi.po_number
+      LEFT JOIN receiving_logs rl ON ph.po_number = rl.po_number AND rl.sku = pi.sku
       GROUP BY ph.po_id
       ORDER BY ph.created_at DESC
     `);
@@ -68,6 +70,7 @@ app.get('/api/po', async (req, res) => {
     const result = rows.map(r => ({
       ...r,
       skus: r.skus ? r.skus.split('|') : [],
+      discrepancy_count: +(r.discrepancy_count || 0),
     }));
     res.json(result);
   } catch (err) {
@@ -147,7 +150,8 @@ app.put('/api/po/:poNumber', async (req, res) => {
     const { poNumber } = req.params;
     const { status, departure_date, est_lead_time, project_name,
             logistics_company, shipping_method,
-            order_date, actual_billed_weight, actual_billed_volume } = req.body;
+            order_date, actual_billed_weight, actual_billed_volume,
+            discrepancy_ack } = req.body;
 
     const fields = [];
     const values = [];
@@ -158,6 +162,7 @@ app.put('/api/po/:poNumber', async (req, res) => {
     if (logistics_company !== undefined)     { fields.push('logistics_company = ?');     values.push(logistics_company || null); }
     if (actual_billed_weight !== undefined)  { fields.push('actual_billed_weight = ?');  values.push(+actual_billed_weight || 0); }
     if (actual_billed_volume !== undefined)  { fields.push('actual_billed_volume = ?');  values.push(+actual_billed_volume || 0); }
+    if (discrepancy_ack !== undefined)       { fields.push('discrepancy_ack = ?');       values.push(discrepancy_ack ? 1 : 0); }
     if (shipping_method !== undefined) {
       fields.push('shipping_method = ?');
       values.push(shipping_method || null);
@@ -206,6 +211,28 @@ app.post('/api/po/:poNumber/items', async (req, res) => {
       [poNumber, sku, order_qty, remark_purchase || '']
     );
     res.status(201).json({ item_id: result.insertId, po_number: poNumber, sku, order_qty, remark_purchase });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/po/:poNumber/extra-items — warehouse adds SKUs received outside PO
+app.post('/api/po/:poNumber/extra-items', async (req, res) => {
+  try {
+    const { poNumber } = req.params;
+    const { skus = [] } = req.body; // [{sku, item_type}]
+    for (const s of skus) {
+      if (!s.sku) continue;
+      // INSERT IGNORE so duplicates don't error
+      await pool.query(
+        `INSERT IGNORE INTO po_items
+           (po_number, sku, order_qty, remark_purchase, item_type, is_extra)
+         VALUES (?,?,0,'⚠ ได้รับนอก PO',?,1)`,
+        [poNumber, s.sku, s.item_type || 'Product']
+      );
+    }
+    const [items] = await pool.query('SELECT * FROM po_items WHERE po_number = ?', [poNumber]);
+    res.json(items);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -53,6 +53,8 @@ const statements = [
   `ALTER TABLE Item_Master ADD COLUMN measurement_photo_url VARCHAR(500) DEFAULT NULL`,
   `ALTER TABLE po_headers ADD COLUMN actual_billed_weight DECIMAL(10,2) DEFAULT 0`,
   `ALTER TABLE po_headers ADD COLUMN actual_billed_volume DECIMAL(10,4) DEFAULT 0`,
+  `ALTER TABLE po_headers ADD COLUMN discrepancy_ack TINYINT(1) DEFAULT 0`,
+  `ALTER TABLE po_items ADD COLUMN is_extra TINYINT(1) DEFAULT 0`,
 ];
 
 (async () => {

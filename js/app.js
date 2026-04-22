@@ -308,8 +308,10 @@ async function renderDashboard(body, topbar) {
   const poRows = activePOs.length ? activePOs.map(po => {
     const eta = getETA(po); const overdue = isOverdue(po); const progress = etaProgress(po);
     const logBadge = po.logistics_company ? `<span style="font-size:11px;color:#64748b;margin-left:6px">${po.logistics_company}${po.shipping_method === 'รถ' ? ' 🚛' : po.shipping_method === 'เรือ' ? ' 🚢' : ''}</span>` : '';
+    const discBadge = (po.discrepancy_count > 0 && !po.discrepancy_ack)
+      ? `<span title="มีความคลาดเคลื่อน ${po.discrepancy_count} SKU" style="margin-left:6px;display:inline-flex;align-items:center;gap:3px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;padding:2px 7px;border-radius:99px;border:1px solid #fcd34d">⚠ คลาดเคลื่อน</span>` : '';
     return `<tr class="${overdue ? 'overdue-row' : ''}" style="cursor:pointer" onclick="viewPODetail('${po.po_number}')">
-      <td><span class="po-number-tag">${po.po_number}</span>${logBadge}</td>
+      <td><span class="po-number-tag">${po.po_number}</span>${logBadge}${discBadge}</td>
       <td>${po.project_name}</td>
       <td>${statusBadge(po.status, overdue)}</td>
       <td class="td-muted">${formatDate(po.departure_date)}</td>
@@ -558,11 +560,13 @@ async function renderPODetail(body, topbar) {
       <td class="text-right text-sm td-muted">${item.estimated_weight ? `${item.estimated_weight} kg` : '-'}</td>
       <td class="text-right text-sm" style="color:#059669">${item.shipping_cost ? `฿${(+item.shipping_cost).toLocaleString()}` : '-'}<br><span class="td-muted text-sm">${item.selected_logistics||''}</span></td>` : '';
 
-    return `<tr>
-      <td>${skuCell}</td>
-      <td class="text-right">${item.order_qty.toLocaleString()}</td>
+    // Highlight extra (received outside PO) rows
+    const isExtra = item.is_extra == 1;
+    return `<tr${isExtra ? ' style="background:rgba(251,191,36,.08)"' : ''}>
+      <td>${skuCell}${isExtra ? '<br><span style="font-size:11px;color:#d97706;font-weight:600">⚠ นอก PO</span>' : ''}</td>
+      <td class="text-right">${isExtra ? '<span class="text-muted text-sm">ไม่ได้สั่ง</span>' : item.order_qty.toLocaleString()}</td>
       <td class="text-right">${hasReceive ? log.receive_qty.toLocaleString() : '<span class="text-muted">-</span>'}</td>
-      <td class="text-right">${hasReceive ? diffChip(item.order_qty, log.receive_qty) : '<span class="text-muted">-</span>'}</td>
+      <td class="text-right">${hasReceive && !isExtra ? diffChip(item.order_qty, log.receive_qty) : (hasReceive ? '<span class="diff-chip diff-over">เกิน</span>' : '<span class="text-muted">-</span>')}</td>
       <td class="text-right">${hasQC ? `<span style="color:#059669;font-weight:600">${log.pass_qc_qty}</span>` : '<span class="text-muted">รอ QC</span>'}</td>
       <td class="text-right">${hasQC ? (log.not_pass_qc_qty > 0 ? `<span style="color:#dc2626;font-weight:600">${log.not_pass_qc_qty}</span>` : '<span style="color:#059669">0</span>') : '<span class="text-muted">-</span>'}</td>
       <td class="text-sm text-muted">${item.remark_purchase || ''}</td>
@@ -609,6 +613,48 @@ async function renderPODetail(body, topbar) {
         </div>`).join('')}
       </div>
     </div>` : ''}
+    ${(() => {
+      // Discrepancy summary card
+      const shortage = items.filter(it => {
+        const log = logs.find(l => l.sku === it.sku);
+        return !it.is_extra && log && log.receive_qty > 0 && log.receive_qty < it.order_qty;
+      });
+      const overage = items.filter(it => {
+        const log = logs.find(l => l.sku === it.sku);
+        return log && log.receive_qty > 0 && (it.is_extra || log.receive_qty > it.order_qty);
+      });
+      if (!shortage.length && !overage.length) return '';
+      const acked = po.discrepancy_ack == 1;
+      const shortageRows = shortage.map(it => {
+        const log = logs.find(l => l.sku === it.sku);
+        const diff = it.order_qty - log.receive_qty;
+        return `<tr><td class="font-mono">${it.sku}</td><td class="text-right">${it.order_qty}</td><td class="text-right">${log.receive_qty}</td><td class="text-right"><span style="color:#dc2626;font-weight:700">-${diff} ชิ้น (ขาด)</span></td></tr>`;
+      }).join('');
+      const overageRows = overage.map(it => {
+        const log = logs.find(l => l.sku === it.sku);
+        const diff = it.is_extra ? log.receive_qty : log.receive_qty - it.order_qty;
+        return `<tr><td class="font-mono">${it.sku}${it.is_extra ? ' <span style="font-size:11px;color:#d97706">(นอก PO)</span>' : ''}</td><td class="text-right">${it.is_extra ? '-' : it.order_qty}</td><td class="text-right">${log.receive_qty}</td><td class="text-right"><span style="color:#7c3aed;font-weight:700">+${diff} ชิ้น (เกิน)</span></td></tr>`;
+      }).join('');
+      return `
+    <div class="card" style="${acked ? 'border-color:rgba(16,185,129,.3)' : 'border-color:rgba(239,68,68,.25)'}">
+      <div class="card-header" style="margin-bottom:12px">
+        <div>
+          <div class="card-title">${acked ? '✅ ความคลาดเคลื่อน — รับรู้แล้ว' : '🚨 ความคลาดเคลื่อนในการรับสินค้า'}</div>
+          <div class="card-subtitle">${acked ? 'Claimed / Acknowledged แล้ว ไม่แสดง alert' : `ขาด ${shortage.length} SKU · เกิน/นอก PO ${overage.length} SKU — ควร claim กับ factory`}</div>
+        </div>
+        ${acked
+          ? `<button class="btn-secondary btn-sm" onclick="ackDiscrepancy('${po.po_number}', 0)">↩ ยกเลิกการรับรู้</button>`
+          : `<button class="btn-primary btn-sm" onclick="ackDiscrepancy('${po.po_number}', 1)">✅ รับรู้แล้ว / Claim แล้ว</button>`}
+      </div>
+      ${!acked ? `<div class="alert alert-red" style="margin-bottom:12px"><span class="alert-icon">⚠️</span><div class="alert-body"><div class="alert-title">พบความคลาดเคลื่อน — กด "รับรู้แล้ว" หลัง claim กับ factory เสร็จสิ้น</div></div></div>` : ''}
+      <div class="table-wrap" style="border:1px solid rgba(33,55,60,.10);border-radius:10px">
+        <table>
+          <thead><tr><th>SKU</th><th style="text-align:right">สั่ง</th><th style="text-align:right">รับได้จริง</th><th style="text-align:right">ส่วนต่าง</th></tr></thead>
+          <tbody>${shortageRows}${overageRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+    })()}
     ${isPurchase ? (() => {
       const sysWeight = items.reduce((s, it) => s + (+it.estimated_weight || 0), 0);
       const sysVolume = items.reduce((s, it) => s + (+it.estimated_volume || 0), 0);
@@ -1087,6 +1133,16 @@ async function saveStatusUpdate() {
   } catch (err) { toast(err.message, 'error'); }
 }
 
+async function ackDiscrepancy(poNumber, ack) {
+  try {
+    await API.put(`/po/${poNumber}`, { discrepancy_ack: ack });
+    toast(ack ? '✅ รับรู้ความคลาดเคลื่อนแล้ว' : 'ยกเลิกการรับรู้แล้ว', 'success');
+    // Re-render PO detail
+    editingPO = await API.get(`/po/${poNumber}`);
+    navigate('po-detail');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
 async function saveBilledData(poNumber) {
   const actual_billed_weight = +document.getElementById('billed-weight')?.value || 0;
   const actual_billed_volume = +document.getElementById('billed-volume')?.value || 0;
@@ -1283,6 +1339,7 @@ async function goReceive(poNumber) {
 // WAREHOUSE — RECEIVE & QC
 // ============================================================
 let poLevelPhotoFiles = []; // PO-level evidence photos (not tied to any SKU)
+let extraReceiveRows  = []; // SKUs received that were not in original PO
 
 async function renderWHReceive(body, topbar) {
   let po = receivingPO;
@@ -1293,7 +1350,8 @@ async function renderWHReceive(body, topbar) {
 
   const items = po.items || [];
   const logs = po.logs || [];
-  poLevelPhotoFiles = [];
+  poLevelPhotoFiles  = [];
+  extraReceiveRows   = [];
 
   // Load existing PO-level evidence images
   let existingPOImages = [];
@@ -1382,6 +1440,19 @@ async function renderWHReceive(body, topbar) {
       </div>
     </div>
     ${itemForms}
+    <!-- Extra SKUs received outside PO -->
+    <div class="card" id="extra-sku-card">
+      <div class="card-header" style="margin-bottom:12px">
+        <div>
+          <div class="card-title">➕ สินค้าที่ได้รับเพิ่ม (ไม่ได้สั่ง)</div>
+          <div class="card-subtitle">เพิ่ม SKU ที่ได้รับมาแต่ไม่มีใน PO เช่น ของแถม หรือสินค้าผิด</div>
+        </div>
+        <button class="btn-secondary btn-sm" onclick="addExtraRow()">＋ เพิ่ม SKU</button>
+      </div>
+      <div id="extra-rows-wrap">
+        <div class="text-muted text-sm" style="padding:8px 0" id="extra-rows-empty">ยังไม่มีรายการ — กดปุ่มเพื่อเพิ่ม SKU ที่ได้รับนอก PO</div>
+      </div>
+    </div>
     <div class="card">
       <div class="card-title mb-4">📸 รูปภาพหลักฐานการรับสินค้า (รวม PO)</div>
       <p class="text-sm text-muted mb-3" style="margin-bottom:12px">ถ่ายรูปรวมสินค้าของ PO นี้ได้เลย ไม่ต้องผูกกับ SKU ใดๆ</p>
@@ -1451,6 +1522,61 @@ function updateQCResult(idx, notPass) {
   if (el) el.innerHTML = notPass > 0 ? `<span class="badge badge-shipped">ไม่ผ่าน ${notPass} ชิ้น</span>` : `<span class="badge badge-arrived">ผ่านทั้งหมด</span>`;
 }
 
+// ============================================================
+// EXTRA SKU ROWS (received outside PO)
+// ============================================================
+function addExtraRow() {
+  extraReceiveRows.push({ sku:'', arrived_date: today(), receive_qty:'', pass_qc_qty:'', not_pass_qc_qty:'', remark_warehouse:'' });
+  renderExtraRows();
+}
+function removeExtraRow(i) {
+  extraReceiveRows.splice(i, 1);
+  renderExtraRows();
+}
+function renderExtraRows() {
+  const wrap = document.getElementById('extra-rows-wrap');
+  const emptyEl = document.getElementById('extra-rows-empty');
+  if (!wrap) return;
+  if (!extraReceiveRows.length) {
+    wrap.innerHTML = `<div class="text-muted text-sm" style="padding:8px 0" id="extra-rows-empty">ยังไม่มีรายการ — กดปุ่มเพื่อเพิ่ม SKU ที่ได้รับนอก PO</div>`;
+    return;
+  }
+  wrap.innerHTML = extraReceiveRows.map((r, i) => `
+    <div style="display:grid;grid-template-columns:1fr 130px 90px 90px 90px 1fr 36px;gap:8px;align-items:end;padding:10px 0;border-bottom:1px solid rgba(33,55,60,.07)">
+      <div class="form-group" style="margin:0">
+        <label style="font-size:12px">SKU <span style="color:#ef4444">*</span></label>
+        <input class="form-control" placeholder="เช่น MP-BJM-001-S" value="${r.sku}"
+          oninput="extraReceiveRows[${i}].sku=this.value">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label style="font-size:12px">วันที่รับ</label>
+        <input class="form-control" type="date" value="${r.arrived_date}"
+          oninput="extraReceiveRows[${i}].arrived_date=this.value">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label style="font-size:12px">รับ (ชิ้น) <span style="color:#ef4444">*</span></label>
+        <input class="form-control" type="number" min="0" placeholder="0" value="${r.receive_qty}"
+          oninput="extraReceiveRows[${i}].receive_qty=+this.value;extraReceiveRows[${i}].pass_qc_qty=+this.value;document.getElementById('ex-pass-${i}').value=this.value">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label style="font-size:12px">Pass QC</label>
+        <input class="form-control" type="number" min="0" placeholder="0" value="${r.pass_qc_qty}" id="ex-pass-${i}"
+          oninput="extraReceiveRows[${i}].pass_qc_qty=+this.value">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label style="font-size:12px">Not Pass</label>
+        <input class="form-control" type="number" min="0" placeholder="0" value="${r.not_pass_qc_qty}"
+          oninput="extraReceiveRows[${i}].not_pass_qc_qty=+this.value">
+      </div>
+      <div class="form-group" style="margin:0">
+        <label style="font-size:12px">หมายเหตุ</label>
+        <input class="form-control" placeholder="หมายเหตุ..." value="${r.remark_warehouse}"
+          oninput="extraReceiveRows[${i}].remark_warehouse=this.value">
+      </div>
+      <button class="btn-danger btn-sm" onclick="removeExtraRow(${i})" style="align-self:end;padding:8px;min-height:42px">✕</button>
+    </div>`).join('');
+}
+
 // PO-level evidence photo handlers
 function handlePOLevelUpload(input) {
   poLevelPhotoFiles.push(...Array.from(input.files));
@@ -1505,10 +1631,26 @@ async function saveReceiving() {
     }
   });
 
-  if (!hasData) { toast('กรุณากรอกจำนวนรับสินค้าอย่างน้อย 1 รายการ', 'error'); return; }
+  // Collect valid extra rows
+  const validExtras = extraReceiveRows.filter(r => r.sku && r.receive_qty > 0);
+  if (!hasData && !validExtras.length) { toast('กรุณากรอกจำนวนรับสินค้าอย่างน้อย 1 รายการ', 'error'); return; }
+
+  // Push extra rows into logs too
+  validExtras.forEach(r => {
+    hasData = true;
+    logs.push({ sku: r.sku, arrived_date: r.arrived_date || today(),
+      receive_qty: +r.receive_qty, pass_qc_qty: +r.pass_qc_qty,
+      not_pass_qc_qty: +r.not_pass_qc_qty, remark_warehouse: r.remark_warehouse || '' });
+  });
 
   try {
     if (btn) { btn.disabled = true; btn.textContent = 'กำลังบันทึก...'; }
+    // Register extra SKUs in po_items first (order_qty=0, is_extra=1)
+    if (validExtras.length) {
+      await API.post(`/po/${po.po_number}/extra-items`, {
+        skus: validExtras.map(r => ({ sku: r.sku, item_type: 'Product' }))
+      });
+    }
     await API.post('/receiving', { po_number: po.po_number, logs, new_status });
     // Upload PO-level evidence photos (not tied to any SKU)
     if (poLevelPhotoFiles.length) {
