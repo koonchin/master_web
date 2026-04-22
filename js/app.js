@@ -898,13 +898,18 @@ function handleGridPaste(e) {
 }
 
 // SKU lookup + UOM calculation
+const DEFAULT_SPEC = { item_type: 'Product', default_weight_per_pc: 0.3, qty_per_carton: 1, carton_weight: 0, carton_volume: 0 };
+
 function onSkuChange(input, idx) {
   const skuVal = input.value.trim();
   const item = _itemMasterList.find(it => it.item_id === skuVal);
-  // Store item type on the row as data attribute
   const row = document.getElementById(`temp-item-${idx}`);
-  if (row) row.dataset.itemType = item?.item_type || '';
-  if (row) row.dataset.itemSpec = item ? JSON.stringify(item) : '';
+  if (!row) return;
+  // If SKU not in Item Master → fall back to defaults (Product, 0.3 kg/pc)
+  const spec = item || (skuVal ? { ...DEFAULT_SPEC, item_id: skuVal } : null);
+  row.dataset.itemType = spec?.item_type || '';
+  row.dataset.itemSpec = spec ? JSON.stringify(spec) : '';
+  row.dataset.isDefault = item ? '0' : (skuVal ? '1' : '0');
   onQtyChange(idx);
 }
 
@@ -963,10 +968,12 @@ async function onQtyChange(idx) {
   } else if (spec.item_type === 'Product') {
     const weight = +(qty * spec.default_weight_per_pc).toFixed(2);
     row.dataset.weight = weight;
+    const isDefault = row.dataset.isDefault === '1';
     detail.innerHTML = `
       <div style="background:#fefce8;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:13px">
         <span>🏋 น้ำหนักรวม (ประมาณ) <strong>${weight.toLocaleString()}</strong> kg</span>
         <span class="text-muted text-sm" style="margin-left:12px">(${spec.default_weight_per_pc} kg × ${qty.toLocaleString()} ชิ้น)</span>
+        ${isDefault ? `<span style="margin-left:10px;font-size:11px;background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:99px;font-weight:600">⚠ ไม่พบใน Item Master — ใช้ค่า default</span>` : ''}
       </div>`;
   } else {
     infoRow.style.display = 'none';
