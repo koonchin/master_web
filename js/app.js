@@ -389,16 +389,16 @@ async function renderDashboard(body, topbar) {
 }
 
 function filterStatus(status) {
+  _pendingPOFilter = status;
   navigate('po-list');
-  setTimeout(() => { const sel = document.getElementById('filter-status'); if (sel) { sel.value = status; applyPOListFilter(); } }, 100);
 }
 function filterAndShowOverdue() {
+  _pendingPOFilter = '__overdue__';
   navigate('po-list');
-  setTimeout(() => { const sel = document.getElementById('filter-status'); if (sel) { sel.value = '__overdue__'; applyPOListFilter(); } }, 100);
 }
 function filterAndShowDiscrepancy() {
+  _pendingPOFilter = '__discrepancy__';
   navigate('po-list');
-  setTimeout(() => { const sel = document.getElementById('filter-status'); if (sel) { sel.value = '__discrepancy__'; applyPOListFilter(); } }, 100);
 }
 function filterDiscrepancy(event) {
   event.stopPropagation();
@@ -408,7 +408,8 @@ function filterDiscrepancy(event) {
 // ============================================================
 // PO LIST
 // ============================================================
-let _allPOHeaders = [];
+let _allPOHeaders    = [];
+let _pendingPOFilter = ''; // set before navigating → picked up by renderPOList
 
 async function renderPOList(body, topbar) {
   topbar.innerHTML = `
@@ -417,6 +418,19 @@ async function renderPOList(body, topbar) {
 
   _allPOHeaders = await API.get('/po');
 
+  // Build status options — mark pending filter as selected
+  const statusOpts = [
+    ['', 'ทุกสถานะ'],
+    ['Draft',          '📝 Draft'],
+    ['Ordered',        '📋 Ordered'],
+    ['Shipped_CN',     '🚢 Shipped (CN)'],
+    ['Thai_Customs',   '🛃 Thai Customs'],
+    ['Arrived',        '📦 Arrived'],
+    ['Completed',      '✅ Completed'],
+    ['__overdue__',    '⚠ Overdue เท่านั้น'],
+    ['__discrepancy__','🚨 คลาดเคลื่อน (ยังไม่ acknowledge)'],
+  ].map(([v, l]) => `<option value="${v}" ${v === _pendingPOFilter ? 'selected' : ''}>${l}</option>`).join('');
+
   body.innerHTML = `
     <div class="card">
       <div class="filter-row">
@@ -424,16 +438,8 @@ async function renderPOList(body, topbar) {
           <span class="icon">🔍</span>
           <input type="text" id="search-po" placeholder="ค้นหา PO, Project, SKU... (คั่นด้วย , เพื่อค้นหาหลายรายการ)" oninput="applyPOListFilter()">
         </div>
-        <select class="form-control" id="filter-status" style="width:200px" onchange="applyPOListFilter()">
-          <option value="">ทุกสถานะ</option>
-          <option value="Draft">Draft</option>
-          <option value="Ordered">Ordered</option>
-          <option value="Shipped_CN">Shipped (CN)</option>
-          <option value="Thai_Customs">Thai Customs</option>
-          <option value="Arrived">Arrived</option>
-          <option value="Completed">Completed</option>
-          <option value="__overdue__">⚠ Overdue เท่านั้น</option>
-          <option value="__discrepancy__">🚨 คลาดเคลื่อน (ยังไม่ acknowledge)</option>
+        <select class="form-control" id="filter-status" style="width:220px" onchange="applyPOListFilter()">
+          ${statusOpts}
         </select>
         <span class="text-muted text-sm ml-auto" id="po-count"></span>
       </div>
@@ -446,6 +452,7 @@ async function renderPOList(body, topbar) {
     </div>`;
 
   applyPOListFilter();
+  _pendingPOFilter = ''; // consumed
 }
 
 function applyPOListFilter() {
