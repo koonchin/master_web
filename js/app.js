@@ -11,7 +11,7 @@ let currentRole = 'purchase';
 let currentView = 'dashboard';
 let editingPO = null;    // full PO object with items + logs
 let receivingPO = null;
-let dashFilter = { dateField: 'order_date', year: '', month: '', logistics_company: '', shipping_method: '', status: '' };
+let dashFilter = { dateField: 'order_date', year: '', month: '', logistics_company: '', shipping_method: '', status: '', item_type: '' };
 let _itemMasterList = [];   // cache for Item_Master
 let _logisticsRates = [];   // cache for Logistics_Rates
 
@@ -201,11 +201,12 @@ function dashFilterChanged() {
   dashFilter.month             = document.getElementById('dash-month')?.value     || '';
   dashFilter.logistics_company = document.getElementById('dash-logistics')?.value || '';
   dashFilter.shipping_method   = document.getElementById('dash-method')?.value    || '';
-  dashFilter.status            = document.getElementById('dash-status')?.value    || '';
+  dashFilter.status            = document.getElementById('dash-status')?.value     || '';
+  dashFilter.item_type         = document.getElementById('dash-itemtype')?.value   || '';
   renderView('dashboard');
 }
 function clearDashFilter() {
-  dashFilter = { dateField: 'order_date', year: '', month: '', logistics_company: '', shipping_method: '', status: '' };
+  dashFilter = { dateField: 'order_date', year: '', month: '', logistics_company: '', shipping_method: '', status: '', item_type: '' };
   renderView('dashboard');
 }
 function exportDashboard() {
@@ -248,7 +249,7 @@ async function renderDashboard(body, topbar) {
     { v: 'eta',            l: '📦 วันถึง (ETA)' },
   ].map(o => `<option value="${o.v}" ${dashFilter.dateField === o.v ? 'selected' : ''}>${o.l}</option>`).join('');
 
-  const hasFilter = dashFilter.year || dashFilter.month || dashFilter.logistics_company || dashFilter.shipping_method || dashFilter.status;
+  const hasFilter = dashFilter.year || dashFilter.month || dashFilter.logistics_company || dashFilter.shipping_method || dashFilter.status || dashFilter.item_type;
   const statusOpts = [
     { v: '',            l: 'ทุกสถานะ' },
     { v: 'Draft',       l: '📝 Draft' },
@@ -262,8 +263,13 @@ async function renderDashboard(body, topbar) {
     <div class="card" style="padding:14px 20px;margin-bottom:20px">
       <div class="filter-row" style="flex-wrap:wrap;gap:10px;align-items:center">
         <span style="font-size:13px;font-weight:600;color:#374151">🔽 ตัวกรอง</span>
-        <select class="form-control" style="width:200px" id="dash-status" onchange="dashFilterChanged()">${statusOpts}</select>
-        <select class="form-control" style="width:200px" id="dash-datefield" onchange="dashFilterChanged()">${dateFieldOpts}</select>
+        <select class="form-control" style="width:175px" id="dash-status" onchange="dashFilterChanged()">${statusOpts}</select>
+        <select class="form-control" style="width:155px" id="dash-itemtype" onchange="dashFilterChanged()">
+          <option value=""   ${!dashFilter.item_type                  ? 'selected' : ''}>ทุกประเภทสินค้า</option>
+          <option value="Product"  ${dashFilter.item_type==='Product'  ? 'selected' : ''}>👕 Product</option>
+          <option value="Material" ${dashFilter.item_type==='Material' ? 'selected' : ''}>📦 Material</option>
+        </select>
+        <select class="form-control" style="width:190px" id="dash-datefield" onchange="dashFilterChanged()">${dateFieldOpts}</select>
         <select class="form-control" style="width:100px" id="dash-year" onchange="dashFilterChanged()">${yearOpts}</select>
         <select class="form-control" style="width:140px" id="dash-month" onchange="dashFilterChanged()">${monthOpts}</select>
         <select class="form-control" style="width:145px" id="dash-logistics" onchange="dashFilterChanged()">
@@ -298,6 +304,8 @@ async function renderDashboard(body, topbar) {
   if (dashFilter.logistics_company) filtered = filtered.filter(p => p.logistics_company === dashFilter.logistics_company);
   if (dashFilter.shipping_method)   filtered = filtered.filter(p => p.shipping_method   === dashFilter.shipping_method);
   if (dashFilter.status)            filtered = filtered.filter(p => p.status            === dashFilter.status);
+  if (dashFilter.item_type === 'Product')  filtered = filtered.filter(p => p.has_product);
+  if (dashFilter.item_type === 'Material') filtered = filtered.filter(p => p.has_material);
 
   const totalPO       = filtered.length;
   const shippedCN     = filtered.filter(p => p.status === 'Shipped_CN').length;
@@ -448,21 +456,30 @@ async function renderPOList(body, topbar) {
     ['__discrepancy__','🚨 คลาดเคลื่อน (ยังไม่ acknowledge)'],
   ].map(([v, l]) => `<option value="${v}" ${v === _pendingPOFilter ? 'selected' : ''}>${l}</option>`).join('');
 
+  // Build factory_code options from available POs
+  const allFactoryCodes = [...new Set(_allPOHeaders.map(p => p.factory_code).filter(Boolean))].sort();
+  const factoryOpts = ['<option value="">ทุก Factory</option>',
+    ...allFactoryCodes.map(fc => `<option value="${fc}">${fc}</option>`)
+  ].join('');
+
   body.innerHTML = `
     <div class="card">
-      <div class="filter-row">
-        <div class="search-bar" style="max-width:400px">
+      <div class="filter-row" style="flex-wrap:wrap;gap:10px">
+        <div class="search-bar" style="max-width:360px">
           <span class="icon">🔍</span>
-          <input type="text" id="search-po" placeholder="ค้นหา PO, Project, SKU... (คั่นด้วย , เพื่อค้นหาหลายรายการ)" oninput="applyPOListFilter()">
+          <input type="text" id="search-po" placeholder="ค้นหา PO, Project, SKU... (คั่นด้วย ,)" oninput="applyPOListFilter()">
         </div>
         <select class="form-control" id="filter-status" style="width:220px" onchange="applyPOListFilter()">
           ${statusOpts}
+        </select>
+        <select class="form-control" id="filter-factory" style="width:160px" onchange="applyPOListFilter()">
+          ${factoryOpts}
         </select>
         <span class="text-muted text-sm ml-auto" id="po-count"></span>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>PO Number</th><th>Project Name</th><th>SKU</th><th>วันที่สั่ง</th><th>Status</th><th>ETA</th><th>Lead Time</th><th>จัดการ</th></tr></thead>
+          <thead><tr><th>PO Number</th><th>Project Name</th><th>Factory</th><th>SKU</th><th>วันที่สั่ง</th><th>Status</th><th>ETA</th><th>จัดการ</th></tr></thead>
           <tbody id="po-list-body"></tbody>
         </table>
       </div>
@@ -473,15 +490,19 @@ async function renderPOList(body, topbar) {
 }
 
 function applyPOListFilter() {
-  const rawSearch = document.getElementById('search-po')?.value || '';
-  const terms = rawSearch.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
-  const statusFilter = document.getElementById('filter-status')?.value || '';
+  const rawSearch    = document.getElementById('search-po')?.value || '';
+  const terms        = rawSearch.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+  const statusFilter  = document.getElementById('filter-status')?.value  || '';
+  const factoryFilter = document.getElementById('filter-factory')?.value || '';
   let headers = [..._allPOHeaders];
 
   // Filter by status / special filters
   if      (statusFilter === '__overdue__')      headers = headers.filter(p => isOverdue(p));
   else if (statusFilter === '__discrepancy__')  headers = headers.filter(p => p.discrepancy_count > 0 && !p.discrepancy_ack);
   else if (statusFilter)                        headers = headers.filter(p => p.status === statusFilter);
+
+  // Filter by factory code
+  if (factoryFilter) headers = headers.filter(p => p.factory_code === factoryFilter);
 
   // Multi-term search: PO number, project name, OR any SKU
   // A PO matches if ANY search term matches any field
@@ -532,14 +553,17 @@ function applyPOListFilter() {
     const hasDiscrepancy = po.discrepancy_count > 0 && !po.discrepancy_ack;
     const discBadge = hasDiscrepancy
       ? `<span style="margin-left:6px;display:inline-flex;align-items:center;gap:3px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;padding:2px 7px;border-radius:99px;border:1px solid #fcd34d;cursor:pointer" onclick="filterDiscrepancy(event)" title="คลิกเพื่อดู PO ที่คลาดเคลื่อนทั้งหมด">⚠ คลาดเคลื่อน</span>` : '';
+    const factoryTag = po.factory_code
+      ? `<span style="font-size:11px;font-weight:600;color:#21373C;background:rgba(33,55,60,.1);padding:2px 8px;border-radius:6px;font-family:monospace">${po.factory_code}</span>`
+      : '<span class="text-muted text-sm">-</span>';
     return `<tr class="${overdue ? 'overdue-row' : ''}" style="cursor:pointer" onclick="viewPODetail('${po.po_number}')">
       <td><span class="po-number-tag">${po.po_number}</span>${discBadge}</td>
       <td>${po.project_name}</td>
+      <td>${factoryTag}</td>
       <td>${skuCell}</td>
       <td class="td-muted">${formatDate(po.order_date)}</td>
       <td>${statusBadge(po.status, overdue)}</td>
       <td>${eta ? `<span style="color:${overdue ? '#dc2626' : ''};font-weight:${overdue ? '700' : '400'}">${formatDate(eta)}</span>` : '<span class="td-muted">-</span>'}</td>
-      <td class="td-muted">${po.est_lead_time} วัน</td>
       <td><div class="flex gap-2" onclick="event.stopPropagation()">
         <button class="btn-secondary btn-sm" onclick="viewPODetail('${po.po_number}')">ดูรายละเอียด</button>
         ${currentRole === 'purchase' ? `
@@ -831,6 +855,11 @@ async function renderCreatePO(body, topbar) {
           <label>Project Name <span style="color:#ef4444">*</span></label>
           <input class="form-control" id="f-project" placeholder="เช่น Muslin Pajamas Summer 2026" list="project-datalist" autocomplete="off">
           ${projectDatalist}
+        </div>
+        <div class="form-group">
+          <label>Factory Code</label>
+          <input class="form-control" id="f-factory-code" placeholder="เช่น FAC-BJ-01, GUANGZHOU-02">
+          <span class="hint">รหัสโรงงาน (ใช้ filter ใน Claim / คลาดเคลื่อน)</span>
         </div>
         <div class="form-group">
           <label>Order Date</label>
@@ -1131,6 +1160,7 @@ function calcTotal() {
 async function savePO(status) {
   const po_number        = document.getElementById('f-po-number').value.trim();
   const project_name     = document.getElementById('f-project').value.trim();
+  const factory_code     = document.getElementById('f-factory-code')?.value.trim() || null;
   const order_date       = document.getElementById('f-order-date').value;
   const est_lead_time    = parseInt(document.getElementById('f-lead-time').value);
   const logistics_company = document.getElementById('f-logistics-company')?.value || null;
@@ -1163,7 +1193,7 @@ async function savePO(status) {
 
   try {
     const btn = event.target; btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
-    const newPO = await API.post('/po', { po_number, project_name, order_date, status, est_lead_time: est_lead_time || 25, logistics_company, shipping_method, items });
+    const newPO = await API.post('/po', { po_number, project_name, factory_code, order_date, status, est_lead_time: est_lead_time || 25, logistics_company, shipping_method, items });
     toast(`สร้าง ${po_number} สำเร็จ!`, 'success');
     editingPO = newPO;
     navigate('po-detail');
@@ -1181,6 +1211,7 @@ function openEditStatusModal(poNumber) {
   editingPO = po;
   document.getElementById('modal-po-number').textContent = poNumber;
   document.getElementById('edit-order-date').value = po.order_date ? po.order_date.substring(0, 10) : '';
+  document.getElementById('edit-factory-code').value = po.factory_code || '';
   document.getElementById('edit-status').value = po.status;
   // Default status_date to today
   document.getElementById('edit-status-date').value = new Date().toISOString().substring(0, 10);
@@ -1199,6 +1230,7 @@ function toggleDepartureField() {
 async function saveStatusUpdate() {
   const po = editingPO; if (!po) return;
   const order_date        = document.getElementById('edit-order-date')?.value || null;
+  const factory_code      = document.getElementById('edit-factory-code')?.value.trim() || null;
   const status            = document.getElementById('edit-status').value;
   const status_date       = document.getElementById('edit-status-date')?.value || null;
   const departure_date    = document.getElementById('edit-departure').value || null;
@@ -1206,7 +1238,7 @@ async function saveStatusUpdate() {
   const shipping_method   = document.getElementById('edit-shipping-method')?.value || null;
   const est_lead_time     = parseInt(document.getElementById('edit-leadtime').value);
   try {
-    await API.put(`/po/${po.po_number}`, { order_date, status, status_date, departure_date, logistics_company, shipping_method, est_lead_time });
+    await API.put(`/po/${po.po_number}`, { order_date, factory_code, status, status_date, departure_date, logistics_company, shipping_method, est_lead_time });
     hideModal('edit-status-modal');
     toast(`อัปเดต ${po.po_number} → ${STATUS_LABELS[status]} สำเร็จ`, 'success');
     // Refresh data

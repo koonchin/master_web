@@ -59,7 +59,9 @@ app.get('/api/po', async (req, res) => {
     const [rows] = await pool.query(`
       SELECT ph.*,
         GROUP_CONCAT(DISTINCT pi.sku ORDER BY pi.sku SEPARATOR '|') AS skus,
-        SUM(CASE WHEN rl.sku IS NOT NULL AND rl.receive_qty <> pi.order_qty THEN 1 ELSE 0 END) AS discrepancy_count
+        SUM(CASE WHEN rl.sku IS NOT NULL AND rl.receive_qty <> pi.order_qty THEN 1 ELSE 0 END) AS discrepancy_count,
+        MAX(CASE WHEN pi.item_type = 'Product'  THEN 1 ELSE 0 END) AS has_product,
+        MAX(CASE WHEN pi.item_type = 'Material' THEN 1 ELSE 0 END) AS has_material
       FROM po_headers ph
       LEFT JOIN po_items pi ON ph.po_number = pi.po_number
       LEFT JOIN receiving_logs rl ON ph.po_number = rl.po_number AND rl.sku = pi.sku
@@ -71,6 +73,8 @@ app.get('/api/po', async (req, res) => {
       ...r,
       skus: r.skus ? r.skus.split('|') : [],
       discrepancy_count: +(r.discrepancy_count || 0),
+      has_product:  r.has_product  ? 1 : 0,
+      has_material: r.has_material ? 1 : 0,
     }));
     res.json(result);
   } catch (err) {
@@ -104,7 +108,7 @@ app.post('/api/po', async (req, res) => {
   try {
     await conn.beginTransaction();
     const { po_number, project_name, order_date, status,
-            est_lead_time, logistics_company, shipping_method, items = [] } = req.body;
+            est_lead_time, logistics_company, shipping_method, factory_code, items = [] } = req.body;
 
     if (!po_number || !project_name) {
       return res.status(400).json({ error: 'po_number and project_name are required' });
@@ -115,10 +119,10 @@ app.post('/api/po', async (req, res) => {
     const leadTime = shipping_method === 'รถ' ? 7 : shipping_method === 'เรือ' ? 30 : (est_lead_time || 25);
     await conn.query(
       `INSERT INTO po_headers
-         (po_number, project_name, order_date, status, est_lead_time, logistics_company, shipping_method)
-       VALUES (?,?,?,?,?,?,?)`,
+         (po_number, project_name, order_date, status, est_lead_time, logistics_company, shipping_method, factory_code)
+       VALUES (?,?,?,?,?,?,?,?)`,
       [po_number, project_name, order_date || null, status || 'Draft',
-       leadTime, logistics_company || null, shipping_method || null]
+       leadTime, logistics_company || null, shipping_method || null, factory_code || null]
     );
 
     for (const item of items) {
@@ -155,7 +159,7 @@ app.put('/api/po/:poNumber', async (req, res) => {
     const { status, departure_date, est_lead_time, project_name,
             logistics_company, shipping_method,
             order_date, actual_billed_weight, actual_billed_volume,
-            discrepancy_ack, status_date } = req.body;
+            discrepancy_ack, status_date, factory_code } = req.body;
 
     const fields = [];
     const values = [];
@@ -177,6 +181,7 @@ app.put('/api/po/:poNumber', async (req, res) => {
       }
     }
     if (est_lead_time !== undefined)         { fields.push('est_lead_time = ?');         values.push(est_lead_time); }
+    if (factory_code  !== undefined)         { fields.push('factory_code = ?');          values.push(factory_code || null); }
 
     if (!fields.length) return res.status(400).json({ error: 'No fields to update' });
 

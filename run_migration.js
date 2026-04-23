@@ -55,6 +55,7 @@ const statements = [
   `ALTER TABLE po_headers ADD COLUMN actual_billed_volume DECIMAL(10,4) DEFAULT 0`,
   `ALTER TABLE po_headers ADD COLUMN discrepancy_ack TINYINT(1) DEFAULT 0`,
   `ALTER TABLE po_items ADD COLUMN is_extra TINYINT(1) DEFAULT 0`,
+  `ALTER TABLE po_headers ADD COLUMN factory_code VARCHAR(50) DEFAULT NULL`,
   // Add weight_rate + volume_rate columns to Logistics_Rates (replaces charge_type+rate_price logic)
   `ALTER TABLE Logistics_Rates ADD COLUMN weight_rate DECIMAL(10,2) DEFAULT 0`,
   `ALTER TABLE Logistics_Rates ADD COLUMN volume_rate DECIMAL(10,2) DEFAULT 0`,
