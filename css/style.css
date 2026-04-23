@@ -377,6 +377,7 @@ textarea.form-control  { resize: vertical; min-height: 80px; }
    DIFF CHIP
    ============================================================ */
 .diff-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 700; }
+.dash-chip  { display: inline-flex; align-items: center; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 99px; background: rgba(143,172,215,.15); color: #21373C; border: 1px solid rgba(143,172,215,.4); }
 .diff-ok    { background: #d1fae5; color: #065f46; }
 .diff-over  { background: #ede9fe; color: #5b21b6; }
 .diff-short { background: #fee2e2; color: #991b1b; }

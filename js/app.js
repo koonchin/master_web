@@ -259,34 +259,71 @@ async function renderDashboard(body, topbar) {
     { v: 'Arrived',     l: '📦 Arrived' },
     { v: 'Completed',   l: '✅ Completed' },
   ].map(o => `<option value="${o.v}" ${o.v === dashFilter.status ? 'selected' : ''}>${o.l}</option>`).join('');
+  // Build active-filter summary chips
+  const activeChips = [
+    dashFilter.status            && `<span class="dash-chip">สถานะ: ${statusOpts.match(new RegExp(`value="${dashFilter.status}"[^>]*>([^<]+)`))?.[1] || dashFilter.status}</span>`,
+    dashFilter.item_type         && `<span class="dash-chip">ประเภท: ${dashFilter.item_type}</span>`,
+    dashFilter.year              && `<span class="dash-chip">ปี: ${dashFilter.year}</span>`,
+    dashFilter.month             && `<span class="dash-chip">เดือน: ${monthNames[+dashFilter.month-1]}</span>`,
+    dashFilter.logistics_company && `<span class="dash-chip">บริษัท: ${dashFilter.logistics_company}</span>`,
+    dashFilter.shipping_method   && `<span class="dash-chip">วิธี: ${dashFilter.shipping_method}</span>`,
+  ].filter(Boolean).join('');
+
+  const filterLabel = s => `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5a6e72;margin-bottom:5px">${s}</div>`;
+
   const filterBar = `
-    <div class="card" style="padding:14px 20px;margin-bottom:20px">
-      <div class="filter-row" style="flex-wrap:wrap;gap:10px;align-items:center">
-        <span style="font-size:13px;font-weight:600;color:#374151">🔽 ตัวกรอง</span>
-        <select class="form-control" style="width:175px" id="dash-status" onchange="dashFilterChanged()">${statusOpts}</select>
-        <select class="form-control" style="width:155px" id="dash-itemtype" onchange="dashFilterChanged()">
-          <option value=""   ${!dashFilter.item_type                  ? 'selected' : ''}>ทุกประเภทสินค้า</option>
-          <option value="Product"  ${dashFilter.item_type==='Product'  ? 'selected' : ''}>👕 Product</option>
-          <option value="Material" ${dashFilter.item_type==='Material' ? 'selected' : ''}>📦 Material</option>
-        </select>
-        <select class="form-control" style="width:190px" id="dash-datefield" onchange="dashFilterChanged()">${dateFieldOpts}</select>
-        <select class="form-control" style="width:100px" id="dash-year" onchange="dashFilterChanged()">${yearOpts}</select>
-        <select class="form-control" style="width:140px" id="dash-month" onchange="dashFilterChanged()">${monthOpts}</select>
-        <select class="form-control" style="width:145px" id="dash-logistics" onchange="dashFilterChanged()">
-          <option value="" ${!dashFilter.logistics_company ? 'selected' : ''}>ทุกบริษัทขนส่ง</option>
-          <option value="HLT" ${dashFilter.logistics_company === 'HLT' ? 'selected' : ''}>HLT</option>
-          <option value="CTW" ${dashFilter.logistics_company === 'CTW' ? 'selected' : ''}>CTW</option>
-        </select>
-        <select class="form-control" style="width:135px" id="dash-method" onchange="dashFilterChanged()">
-          <option value="" ${!dashFilter.shipping_method ? 'selected' : ''}>ทุกวิธีขนส่ง</option>
-          <option value="รถ" ${dashFilter.shipping_method === 'รถ' ? 'selected' : ''}>🚛 รถ</option>
-          <option value="เรือ" ${dashFilter.shipping_method === 'เรือ' ? 'selected' : ''}>🚢 เรือ</option>
-        </select>
-        <div style="margin-left:auto;display:flex;gap:8px">
-          ${hasFilter ? `<button class="btn-secondary" style="color:#ef4444;border-color:#fca5a5" onclick="clearDashFilter()">✕ ล้าง</button>` : ''}
-          <button class="btn-secondary" onclick="exportDashboard()">📥 Export CSV</button>
+    <div class="card" style="padding:16px 20px;margin-bottom:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:${hasFilter ? 14 : 12}px">
+        <span style="font-size:13px;font-weight:700;color:#21373C;display:flex;align-items:center;gap:8px">
+          🔽 ตัวกรอง
+          ${hasFilter ? `<span style="font-size:11px;font-weight:600;background:#21373C;color:#EAE5D8;padding:1px 8px;border-radius:99px">${activeChips.split('dash-chip').length - 1} ใช้งานอยู่</span>` : ''}
+        </span>
+        <div style="display:flex;gap:8px">
+          ${hasFilter ? `<button class="btn-secondary" style="color:#ef4444;border-color:#fca5a5;font-size:12px" onclick="clearDashFilter()">✕ ล้างทั้งหมด</button>` : ''}
+          <button class="btn-secondary" style="font-size:12px" onclick="exportDashboard()">📥 Export CSV</button>
         </div>
       </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px">
+        <div>
+          ${filterLabel('สถานะ PO')}
+          <select class="form-control" id="dash-status" onchange="dashFilterChanged()">${statusOpts}</select>
+        </div>
+        <div>
+          ${filterLabel('ประเภทสินค้า')}
+          <select class="form-control" id="dash-itemtype" onchange="dashFilterChanged()">
+            <option value=""        ${!dashFilter.item_type                  ? 'selected' : ''}>ทุกประเภท</option>
+            <option value="Product" ${dashFilter.item_type==='Product'       ? 'selected' : ''}>👕 Product</option>
+            <option value="Material"${dashFilter.item_type==='Material'      ? 'selected' : ''}>📦 Material</option>
+          </select>
+        </div>
+        <div style="grid-column:span 2">
+          ${filterLabel('กรองวันที่ตาม')}
+          <div style="display:flex;gap:8px">
+            <select class="form-control" id="dash-datefield" onchange="dashFilterChanged()" style="flex:2">${dateFieldOpts}</select>
+            <select class="form-control" id="dash-year"      onchange="dashFilterChanged()" style="flex:1;min-width:70px">${yearOpts}</select>
+            <select class="form-control" id="dash-month"     onchange="dashFilterChanged()" style="flex:2">${monthOpts}</select>
+          </div>
+        </div>
+        <div>
+          ${filterLabel('บริษัทขนส่ง')}
+          <select class="form-control" id="dash-logistics" onchange="dashFilterChanged()">
+            <option value="" ${!dashFilter.logistics_company ? 'selected' : ''}>ทั้งหมด</option>
+            <option value="HLT" ${dashFilter.logistics_company==='HLT' ? 'selected' : ''}>HLT</option>
+            <option value="CTW" ${dashFilter.logistics_company==='CTW' ? 'selected' : ''}>CTW</option>
+          </select>
+        </div>
+        <div>
+          ${filterLabel('วิธีขนส่ง')}
+          <select class="form-control" id="dash-method" onchange="dashFilterChanged()">
+            <option value=""    ${!dashFilter.shipping_method          ? 'selected' : ''}>ทั้งหมด</option>
+            <option value="รถ"  ${dashFilter.shipping_method==='รถ'   ? 'selected' : ''}>🚛 รถ</option>
+            <option value="เรือ"${dashFilter.shipping_method==='เรือ' ? 'selected' : ''}>🚢 เรือ</option>
+          </select>
+        </div>
+      </div>
+
+      ${hasFilter ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid rgba(33,55,60,.08)">${activeChips}</div>` : ''}
     </div>`;
 
   // Apply filters to headers
