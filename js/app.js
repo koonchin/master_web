@@ -11,7 +11,7 @@ let currentRole = 'purchase';
 let currentView = 'dashboard';
 let editingPO = null;    // full PO object with items + logs
 let receivingPO = null;
-let dashFilter = { dateField: 'order_date', year: '', month: '', logistics_company: '', shipping_method: '' };
+let dashFilter = { dateField: 'order_date', year: '', month: '', logistics_company: '', shipping_method: '', status: '' };
 let _itemMasterList = [];   // cache for Item_Master
 let _logisticsRates = [];   // cache for Logistics_Rates
 
@@ -201,10 +201,11 @@ function dashFilterChanged() {
   dashFilter.month             = document.getElementById('dash-month')?.value     || '';
   dashFilter.logistics_company = document.getElementById('dash-logistics')?.value || '';
   dashFilter.shipping_method   = document.getElementById('dash-method')?.value    || '';
+  dashFilter.status            = document.getElementById('dash-status')?.value    || '';
   renderView('dashboard');
 }
 function clearDashFilter() {
-  dashFilter = { dateField: 'order_date', year: '', month: '', logistics_company: '', shipping_method: '' };
+  dashFilter = { dateField: 'order_date', year: '', month: '', logistics_company: '', shipping_method: '', status: '' };
   renderView('dashboard');
 }
 function exportDashboard() {
@@ -247,20 +248,30 @@ async function renderDashboard(body, topbar) {
     { v: 'eta',            l: '📦 วันถึง (ETA)' },
   ].map(o => `<option value="${o.v}" ${dashFilter.dateField === o.v ? 'selected' : ''}>${o.l}</option>`).join('');
 
-  const hasFilter = dashFilter.year || dashFilter.month || dashFilter.logistics_company || dashFilter.shipping_method;
+  const hasFilter = dashFilter.year || dashFilter.month || dashFilter.logistics_company || dashFilter.shipping_method || dashFilter.status;
+  const statusOpts = [
+    { v: '',            l: 'ทุกสถานะ' },
+    { v: 'Draft',       l: '📝 Draft' },
+    { v: 'Ordered',     l: '📋 Ordered' },
+    { v: 'Shipped_CN',  l: '🚢 Shipped from China' },
+    { v: 'Thai_Customs',l: '🛃 Thai Customs' },
+    { v: 'Arrived',     l: '📦 Arrived' },
+    { v: 'Completed',   l: '✅ Completed' },
+  ].map(o => `<option value="${o.v}" ${o.v === dashFilter.status ? 'selected' : ''}>${o.l}</option>`).join('');
   const filterBar = `
     <div class="card" style="padding:14px 20px;margin-bottom:20px">
       <div class="filter-row" style="flex-wrap:wrap;gap:10px;align-items:center">
         <span style="font-size:13px;font-weight:600;color:#374151">🔽 ตัวกรอง</span>
-        <select class="form-control" style="width:210px" id="dash-datefield" onchange="dashFilterChanged()">${dateFieldOpts}</select>
-        <select class="form-control" style="width:110px" id="dash-year" onchange="dashFilterChanged()">${yearOpts}</select>
-        <select class="form-control" style="width:155px" id="dash-month" onchange="dashFilterChanged()">${monthOpts}</select>
-        <select class="form-control" style="width:155px" id="dash-logistics" onchange="dashFilterChanged()">
+        <select class="form-control" style="width:200px" id="dash-status" onchange="dashFilterChanged()">${statusOpts}</select>
+        <select class="form-control" style="width:200px" id="dash-datefield" onchange="dashFilterChanged()">${dateFieldOpts}</select>
+        <select class="form-control" style="width:100px" id="dash-year" onchange="dashFilterChanged()">${yearOpts}</select>
+        <select class="form-control" style="width:140px" id="dash-month" onchange="dashFilterChanged()">${monthOpts}</select>
+        <select class="form-control" style="width:145px" id="dash-logistics" onchange="dashFilterChanged()">
           <option value="" ${!dashFilter.logistics_company ? 'selected' : ''}>ทุกบริษัทขนส่ง</option>
           <option value="HLT" ${dashFilter.logistics_company === 'HLT' ? 'selected' : ''}>HLT</option>
           <option value="CTW" ${dashFilter.logistics_company === 'CTW' ? 'selected' : ''}>CTW</option>
         </select>
-        <select class="form-control" style="width:150px" id="dash-method" onchange="dashFilterChanged()">
+        <select class="form-control" style="width:135px" id="dash-method" onchange="dashFilterChanged()">
           <option value="" ${!dashFilter.shipping_method ? 'selected' : ''}>ทุกวิธีขนส่ง</option>
           <option value="รถ" ${dashFilter.shipping_method === 'รถ' ? 'selected' : ''}>🚛 รถ</option>
           <option value="เรือ" ${dashFilter.shipping_method === 'เรือ' ? 'selected' : ''}>🚢 เรือ</option>
@@ -286,6 +297,7 @@ async function renderDashboard(body, topbar) {
   }
   if (dashFilter.logistics_company) filtered = filtered.filter(p => p.logistics_company === dashFilter.logistics_company);
   if (dashFilter.shipping_method)   filtered = filtered.filter(p => p.shipping_method   === dashFilter.shipping_method);
+  if (dashFilter.status)            filtered = filtered.filter(p => p.status            === dashFilter.status);
 
   const totalPO       = filtered.length;
   const shippedCN     = filtered.filter(p => p.status === 'Shipped_CN').length;
