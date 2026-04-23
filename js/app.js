@@ -269,7 +269,7 @@ async function renderDashboard(body, topbar) {
     dashFilter.shipping_method   && `<span class="dash-chip">วิธี: ${dashFilter.shipping_method}</span>`,
   ].filter(Boolean).join('');
 
-  const filterLabel = s => `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5a6e72;margin-bottom:5px">${s}</div>`;
+  const fLabel = s => `<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#5a6e72;margin-bottom:5px">${s}</div>`;
 
   const filterBar = `
     <div class="card" style="padding:16px 20px;margin-bottom:20px">
@@ -286,11 +286,11 @@ async function renderDashboard(body, topbar) {
 
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px">
         <div>
-          ${filterLabel('สถานะ PO')}
+          ${fLabel('สถานะ PO')}
           <select class="form-control" id="dash-status" onchange="dashFilterChanged()">${statusOpts}</select>
         </div>
         <div>
-          ${filterLabel('ประเภทสินค้า')}
+          ${fLabel('ประเภทสินค้า')}
           <select class="form-control" id="dash-itemtype" onchange="dashFilterChanged()">
             <option value=""        ${!dashFilter.item_type                  ? 'selected' : ''}>ทุกประเภท</option>
             <option value="Product" ${dashFilter.item_type==='Product'       ? 'selected' : ''}>👕 Product</option>
@@ -298,7 +298,7 @@ async function renderDashboard(body, topbar) {
           </select>
         </div>
         <div style="grid-column:span 2">
-          ${filterLabel('กรองวันที่ตาม')}
+          ${fLabel('กรองวันที่ตาม')}
           <div style="display:flex;gap:8px">
             <select class="form-control" id="dash-datefield" onchange="dashFilterChanged()" style="flex:2">${dateFieldOpts}</select>
             <select class="form-control" id="dash-year"      onchange="dashFilterChanged()" style="flex:1;min-width:70px">${yearOpts}</select>
@@ -306,7 +306,7 @@ async function renderDashboard(body, topbar) {
           </div>
         </div>
         <div>
-          ${filterLabel('บริษัทขนส่ง')}
+          ${fLabel('บริษัทขนส่ง')}
           <select class="form-control" id="dash-logistics" onchange="dashFilterChanged()">
             <option value="" ${!dashFilter.logistics_company ? 'selected' : ''}>ทั้งหมด</option>
             <option value="HLT" ${dashFilter.logistics_company==='HLT' ? 'selected' : ''}>HLT</option>
@@ -314,7 +314,7 @@ async function renderDashboard(body, topbar) {
           </select>
         </div>
         <div>
-          ${filterLabel('วิธีขนส่ง')}
+          ${fLabel('วิธีขนส่ง')}
           <select class="form-control" id="dash-method" onchange="dashFilterChanged()">
             <option value=""    ${!dashFilter.shipping_method          ? 'selected' : ''}>ทั้งหมด</option>
             <option value="รถ"  ${dashFilter.shipping_method==='รถ'   ? 'selected' : ''}>🚛 รถ</option>
