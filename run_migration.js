@@ -56,6 +56,15 @@ const statements = [
   `ALTER TABLE po_headers ADD COLUMN discrepancy_ack TINYINT(1) DEFAULT 0`,
   `ALTER TABLE po_items ADD COLUMN is_extra TINYINT(1) DEFAULT 0`,
   `ALTER TABLE po_headers ADD COLUMN factory_code VARCHAR(50) DEFAULT NULL`,
+  // Backfill estimated_weight for existing Product items where weight = 0
+  // Use Item Master default_weight_per_pc if available, otherwise fall back to 0.300 kg/pc
+  `UPDATE po_items pi
+   LEFT JOIN Item_Master im ON CONVERT(pi.sku USING utf8mb4) = CONVERT(im.item_id USING utf8mb4)
+   SET pi.estimated_weight = pi.order_qty * COALESCE(NULLIF(im.default_weight_per_pc, 0), 0.300)
+   WHERE (pi.item_type = 'Product' OR pi.item_type IS NULL)
+     AND pi.is_extra = 0
+     AND pi.estimated_weight = 0
+     AND pi.order_qty > 0`,
   // Add weight_rate + volume_rate columns to Logistics_Rates (replaces charge_type+rate_price logic)
   `ALTER TABLE Logistics_Rates ADD COLUMN weight_rate DECIMAL(10,2) DEFAULT 0`,
   `ALTER TABLE Logistics_Rates ADD COLUMN volume_rate DECIMAL(10,2) DEFAULT 0`,
