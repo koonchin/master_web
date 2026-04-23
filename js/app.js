@@ -1065,9 +1065,21 @@ async function onQtyChange(idx) {
   const detail = document.getElementById(`temp-item-${idx}-detail`);
   if (!row || !infoRow || !detail) return;
 
-  const spec = row.dataset.itemSpec ? JSON.parse(row.dataset.itemSpec) : null;
   const inputs = row.querySelectorAll('input');
   const qty = parseInt(inputs[1]?.value || '0');
+
+  // Resolve spec — if not yet set by onSkuChange, do it now (handles fast-tab / paste edge cases)
+  let spec = row.dataset.itemSpec ? JSON.parse(row.dataset.itemSpec) : null;
+  if (!spec) {
+    const skuVal = inputs[0]?.value.trim();
+    if (skuVal) {
+      const item = _itemMasterList.find(it => it.item_id === skuVal);
+      spec = item || { ...DEFAULT_SPEC, item_id: skuVal };
+      row.dataset.itemType  = spec.item_type || '';
+      row.dataset.itemSpec  = JSON.stringify(spec);
+      row.dataset.isDefault = item ? '0' : '1';
+    }
+  }
 
   if (!spec || !qty) { infoRow.style.display = 'none'; return; }
 
@@ -1177,6 +1189,21 @@ async function savePO(status) {
     const order_qty = parseInt(inputs[1]?.value || '0');
     const remark_purchase = inputs[2]?.value.trim();
     if (!sku || order_qty <= 0) return;
+    // Ensure weight is calculated — fallback for SKUs that bypassed onQtyChange
+    let estimatedWeight = +(row.dataset.weight || 0);
+    if (!estimatedWeight) {
+      const spec = row.dataset.itemSpec ? JSON.parse(row.dataset.itemSpec) : null;
+      const resolvedSpec = spec || (() => {
+        const item = _itemMasterList.find(it => it.item_id === sku);
+        return item || { ...DEFAULT_SPEC, item_id: sku };
+      })();
+      if (resolvedSpec.item_type === 'Product' && resolvedSpec.default_weight_per_pc) {
+        estimatedWeight = +(order_qty * resolvedSpec.default_weight_per_pc).toFixed(2);
+      } else if (resolvedSpec.item_type === 'Material' && resolvedSpec.carton_weight) {
+        const cartons = Math.ceil(order_qty / (resolvedSpec.qty_per_carton || 1));
+        estimatedWeight = +(cartons * resolvedSpec.carton_weight).toFixed(2);
+      }
+    }
     // Collect logistics selection
     const selected = row.querySelector(`input[name^="logistics-"]:checked`);
     const [logCo, logMeth, logCost] = (selected?.value || '||').split('|');
@@ -1184,7 +1211,7 @@ async function savePO(status) {
       sku, order_qty, remark_purchase: remark_purchase || '',
       item_type:          row.dataset.itemType || null,
       shipping_cartons:   +(row.dataset.cartons || 0),
-      estimated_weight:   +(row.dataset.weight  || 0),
+      estimated_weight:   estimatedWeight,
       estimated_volume:   +(row.dataset.volume  || 0),
       selected_logistics: selected ? `${logCo} ${logMeth}` : null,
       shipping_cost:      selected ? +logCost : null,
