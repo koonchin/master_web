@@ -580,9 +580,15 @@ async function renderPODetail(body, topbar) {
   (po.status_history || []).forEach(h => {
     histMap[h.status] = h.status_date ? h.status_date.substring(0, 10) : null;
   });
-  // Fill in dates from po_headers if not already in history
+  // Auto-fill dates from po_headers fields for statuses with no explicit history
+  if (!histMap['Draft']      && po.order_date)     histMap['Draft']      = po.order_date.substring(0, 10);
+  if (!histMap['Ordered']    && po.order_date)     histMap['Ordered']    = po.order_date.substring(0, 10);
   if (!histMap['Shipped_CN'] && po.departure_date) histMap['Shipped_CN'] = po.departure_date.substring(0, 10);
-  if (!histMap['Draft'] && po.order_date) histMap['Draft'] = po.order_date.substring(0, 10);
+  // Arrived: use earliest arrived_date from receiving logs
+  if (!histMap['Arrived'] && logs.length > 0) {
+    const arrivedDates = logs.map(l => l.arrived_date).filter(Boolean).sort();
+    if (arrivedDates.length > 0) histMap['Arrived'] = arrivedDates[0].substring(0, 10);
+  }
 
   const stepsHTML = STATUS_FLOW.map((s, i) => {
     const isDone = i < stepIndex; const isCurrent = i === stepIndex;

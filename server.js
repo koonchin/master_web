@@ -335,9 +335,18 @@ app.post('/api/receiving', async (req, res) => {
       );
     }
 
-    // Update PO status
+    // Update PO status + record status history
     if (new_status) {
       await conn.query('UPDATE po_headers SET status = ? WHERE po_number = ?', [new_status, po_number]);
+      // Use the earliest arrived_date from logs as the Arrived date, fallback to today
+      const arrivedDates = logs.map(l => l.arrived_date).filter(Boolean).sort();
+      const arrivedDate = arrivedDates[0] || new Date().toISOString().substring(0, 10);
+      await conn.query(
+        `INSERT INTO po_status_history (po_number, status, status_date)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE status_date = VALUES(status_date)`,
+        [po_number, new_status, arrivedDate]
+      );
     }
 
     await conn.commit();
