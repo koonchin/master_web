@@ -447,12 +447,12 @@ app.get('/api/logistics-rates', async (req, res) => {
 
 app.post('/api/logistics-rates', async (req, res) => {
   try {
-    const { company_name, shipping_method, charge_type, rate_price } = req.body;
-    if (!company_name||!shipping_method||!charge_type||rate_price==null)
-      return res.status(400).json({ error: 'All fields required' });
+    const { company_name, shipping_method, weight_rate = 0, volume_rate = 0 } = req.body;
+    if (!company_name || !shipping_method)
+      return res.status(400).json({ error: 'company_name and shipping_method are required' });
     const [r] = await pool.query(
-      'INSERT INTO Logistics_Rates (company_name,shipping_method,charge_type,rate_price) VALUES (?,?,?,?)',
-      [company_name, shipping_method, charge_type, rate_price]
+      'INSERT INTO Logistics_Rates (company_name, shipping_method, weight_rate, volume_rate) VALUES (?,?,?,?)',
+      [company_name, shipping_method, +weight_rate || 0, +volume_rate || 0]
     );
     const [[row]] = await pool.query('SELECT * FROM Logistics_Rates WHERE id = ?', [r.insertId]);
     res.status(201).json(row);
@@ -461,7 +461,7 @@ app.post('/api/logistics-rates', async (req, res) => {
 
 app.put('/api/logistics-rates/:id', async (req, res) => {
   try {
-    const allowed = ['company_name','shipping_method','charge_type','rate_price'];
+    const allowed = ['company_name', 'shipping_method', 'weight_rate', 'volume_rate'];
     const fields = [], values = [];
     for (const key of allowed) {
       if (req.body[key] !== undefined) { fields.push(`${key} = ?`); values.push(req.body[key]); }
@@ -482,17 +482,27 @@ app.delete('/api/logistics-rates/:id', async (req, res) => {
 });
 
 // POST /api/logistics/compare
+// Uses max(weight × weight_rate, volume × volume_rate) — whichever is more expensive
 app.post('/api/logistics/compare', async (req, res) => {
   try {
     const { weight = 0, volume = 0 } = req.body;
-    const [rates] = await pool.query('SELECT * FROM Logistics_Rates ORDER BY company_name');
+    const [rates] = await pool.query('SELECT * FROM Logistics_Rates ORDER BY company_name, shipping_method');
     const results = rates.map(r => {
-      const qty  = r.charge_type === 'Weight' ? +weight : +volume;
-      const cost = qty * r.rate_price;
-      return { id: r.id, company: r.company_name, method: r.shipping_method,
-               charge_type: r.charge_type, rate: r.rate_price,
-               qty: +qty.toFixed(3), cost: +cost.toFixed(2),
-               unit: r.charge_type === 'Weight' ? 'kg' : 'CBM' };
+      const weightCost = +(+weight * (+r.weight_rate || 0)).toFixed(2);
+      const volumeCost = +(+volume * (+r.volume_rate || 0)).toFixed(2);
+      const cost       = Math.max(weightCost, volumeCost);
+      const charged_by = volumeCost > weightCost ? 'Volume' : 'Weight';
+      return {
+        id:           r.id,
+        company:      r.company_name,
+        method:       r.shipping_method,
+        weight_rate:  +(r.weight_rate  || 0),
+        volume_rate:  +(r.volume_rate  || 0),
+        weight_cost:  weightCost,
+        volume_cost:  volumeCost,
+        charged_by,
+        cost,
+      };
     }).sort((a, b) => a.cost - b.cost);
     res.json(results);
   } catch (err) { res.status(500).json({ error: err.message }); }

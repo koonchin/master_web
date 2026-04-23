@@ -1067,17 +1067,26 @@ async function onQtyChange(idx) {
     try {
       const results = await API.post('/logistics/compare', { weight, volume });
       const sel = row.dataset.selectedLogistics || '';
-      const compareRows = results.map((r, i) => `
-        <label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;background:${i===0?'#ecfdf5':''}">
+      const compareRows = results.map((r, i) => {
+        const chargedLabel = r.charged_by === 'Volume'
+          ? `📐 ปริมาตร ${volume} CBM × ${r.volume_rate.toLocaleString()} = <strong>${r.volume_cost.toLocaleString()} บาท</strong>`
+          : `🏋 น้ำหนัก ${weight} kg × ${r.weight_rate.toLocaleString()} = <strong>${r.weight_cost.toLocaleString()} บาท</strong>`;
+        const otherLabel = r.charged_by === 'Volume'
+          ? (r.weight_rate > 0 ? `<span style="color:#94a3b8;font-size:11px">(น้ำหนัก: ${r.weight_cost.toLocaleString()} บาท)</span>` : '')
+          : (r.volume_rate > 0 ? `<span style="color:#94a3b8;font-size:11px">(ปริมาตร: ${r.volume_cost.toLocaleString()} บาท)</span>` : '');
+        return `
+        <label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;cursor:pointer;background:${i===0?'#ecfdf5':'transparent'};border:1px solid ${i===0?'#6ee7b7':'transparent'}">
           <input type="radio" name="logistics-${idx}" value="${r.company}|${r.method}|${r.cost}" ${sel === `${r.company}|${r.method}` ? 'checked' : ''}>
-          <span style="min-width:60px;font-weight:600">${r.company}</span>
-          <span style="min-width:60px;color:#64748b">${r.method}</span>
-          <span class="badge ${r.charge_type==='Weight'?'badge-ordered':'badge-shipped'}">${r.charge_type==='Weight'?'น้ำหนัก':'ปริมาตร'}</span>
-          <span style="margin-left:auto;font-weight:700;color:#059669">${r.cost.toLocaleString()} บาท</span>
-          ${i===0?'<span style="font-size:11px;color:#059669;font-weight:600">ถูกสุด</span>':''}
-          <button type="button" class="btn-secondary btn-sm" style="margin-left:8px;padding:2px 8px;font-size:11px"
-            onclick="selectLogisticsForPO('${r.company}','${r.method}');event.stopPropagation()">🎯 ใช้วิธีนี้</button>
-        </label>`).join('');
+          <span style="min-width:50px;font-weight:700">${r.company}</span>
+          <span style="min-width:50px;color:#64748b">${r.method}</span>
+          <span style="font-size:12px">${chargedLabel}</span>
+          ${otherLabel}
+          <span style="margin-left:auto;font-weight:700;color:#059669;white-space:nowrap">${r.cost.toLocaleString()} บาท</span>
+          ${i===0?'<span style="font-size:11px;color:#059669;font-weight:600;white-space:nowrap">ถูกสุด</span>':''}
+          <button type="button" class="btn-secondary btn-sm" style="margin-left:4px;padding:2px 8px;font-size:11px;white-space:nowrap"
+            onclick="selectLogisticsForPO('${r.company}','${r.method}');event.stopPropagation()">🎯 ใช้</button>
+        </label>`;
+      }).join('');
       document.getElementById(`logistics-compare-${idx}`).innerHTML =
         `<div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:6px">🔀 เปรียบเทียบค่าขนส่ง</div>${compareRows}`;
     } catch { /* ignore */ }
@@ -1950,27 +1959,33 @@ async function renderLogisticsRates(body, topbar) {
     <tr>
       <td><strong>${r.company_name}</strong></td>
       <td>${r.shipping_method === 'รถ' ? '🚛 รถ' : r.shipping_method === 'เรือ' ? '🚢 เรือ' : r.shipping_method}</td>
-      <td><span class="badge ${r.charge_type === 'Weight' ? 'badge-ordered' : 'badge-shipped'}">${r.charge_type === 'Weight' ? '🏋 Weight (kg)' : '📐 Volume (CBM)'}</span></td>
-      <td class="text-right"><strong>${(+r.rate_price).toLocaleString()}</strong> บาท/${r.charge_type === 'Weight' ? 'kg' : 'CBM'}</td>
+      <td class="text-right">${+r.weight_rate > 0 ? `<strong>${(+r.weight_rate).toLocaleString()}</strong> บาท/kg` : '<span class="text-muted">-</span>'}</td>
+      <td class="text-right">${+r.volume_rate > 0 ? `<strong>${(+r.volume_rate).toLocaleString()}</strong> บาท/CBM` : '<span class="text-muted">-</span>'}</td>
+      <td style="font-size:11px;color:#64748b">ใช้ <strong>ตัวที่แพงกว่า</strong></td>
       <td><div class="flex gap-2">
         <button class="btn-secondary btn-sm" onclick="openRateModal(${JSON.stringify(r).replace(/"/g,'&quot;')})">✏</button>
         <button class="btn-danger btn-sm" onclick="deleteRate(${r.id})">ลบ</button>
       </div></td>
     </tr>`).join('') :
-    `<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">🚚</div><p>ยังไม่มีเรทขนส่ง</p></div></td></tr>`;
+    `<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">🚚</div><p>ยังไม่มีเรทขนส่ง</p></div></td></tr>`;
 
   body.innerHTML = `
+    <div class="card" style="padding:12px 20px;margin-bottom:16px;background:#f0f9ff;border:1px solid #bae6fd">
+      <div style="font-size:13px;color:#0369a1">
+        💡 <strong>หลักการคิดค่าขนส่ง:</strong> ระบบคำนวณทั้งราคาตามน้ำหนัก <em>(weight × rate/kg)</em> และราคาตามปริมาตร <em>(volume × rate/CBM)</em> แล้ว<strong>เลือกตัวที่แพงกว่า</strong>เป็นราคาสุดท้าย
+      </div>
+    </div>
     <div class="card p-0">
       <div class="table-wrap">
         <table>
-          <thead><tr><th>บริษัทขนส่ง</th><th>วิธี</th><th>คิดตาม</th><th style="text-align:right">ราคาต่อหน่วย</th><th></th></tr></thead>
+          <thead><tr><th>บริษัทขนส่ง</th><th>วิธี</th><th style="text-align:right">🏋 Rate/kg</th><th style="text-align:right">📐 Rate/CBM</th><th>หลักการ</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
     </div>
 
     <div class="modal-overlay" id="rate-modal" style="display:none" onclick="if(event.target===this)hideModal('rate-modal')">
-      <div class="modal" style="max-width:420px">
+      <div class="modal" style="max-width:440px">
         <div class="modal-header">
           <h3 id="rate-modal-title">➕ เพิ่มเรทขนส่ง</h3>
           <button class="modal-close" onclick="hideModal('rate-modal')">✕</button>
@@ -1987,16 +2002,18 @@ async function renderLogisticsRates(body, topbar) {
               <input class="form-control" id="rate-method" placeholder="รถ, เรือ, EK...">
             </div>
             <div class="form-group">
-              <label>คิดตาม</label>
-              <select class="form-control" id="rate-charge-type">
-                <option value="Weight">🏋 น้ำหนัก (per kg)</option>
-                <option value="Volume">📐 ปริมาตร (per CBM)</option>
-              </select>
+              <label>🏋 ราคาตามน้ำหนัก (บาท/kg)</label>
+              <input class="form-control" id="rate-weight-rate" type="number" step="0.01" min="0" placeholder="0">
+              <span class="hint">ใส่ 0 ถ้าไม่มีเรทน้ำหนัก</span>
             </div>
             <div class="form-group">
-              <label>ราคาต่อหน่วย (บาท)</label>
-              <input class="form-control" id="rate-price" type="number" step="0.01" placeholder="0">
+              <label>📐 ราคาตามปริมาตร (บาท/CBM)</label>
+              <input class="form-control" id="rate-volume-rate" type="number" step="0.01" min="0" placeholder="0">
+              <span class="hint">ใส่ 0 ถ้าไม่มีเรทปริมาตร</span>
             </div>
+          </div>
+          <div style="background:#fefce8;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:12px;margin-top:4px;color:#92400e">
+            ⚖️ ระบบจะเลือก <strong>ตัวที่แพงกว่า</strong> ระหว่างราคาน้ำหนักกับราคาปริมาตรเป็นค่าขนส่งสุดท้าย
           </div>
         </div>
         <div class="modal-footer">
@@ -2009,22 +2026,23 @@ async function renderLogisticsRates(body, topbar) {
 
 function openRateModal(rate) {
   document.getElementById('rate-modal-title').textContent = rate ? '✏ แก้ไขเรท' : '➕ เพิ่มเรทขนส่ง';
-  document.getElementById('rate-edit-id').value = rate?.id || '';
-  document.getElementById('rate-company').value = rate?.company_name || '';
-  document.getElementById('rate-method').value = rate?.shipping_method || '';
-  document.getElementById('rate-charge-type').value = rate?.charge_type || 'Weight';
-  document.getElementById('rate-price').value = rate?.rate_price || '';
+  document.getElementById('rate-edit-id').value      = rate?.id || '';
+  document.getElementById('rate-company').value      = rate?.company_name || '';
+  document.getElementById('rate-method').value       = rate?.shipping_method || '';
+  document.getElementById('rate-weight-rate').value  = rate?.weight_rate || '';
+  document.getElementById('rate-volume-rate').value  = rate?.volume_rate || '';
   showModal('rate-modal');
 }
 async function saveRate() {
   const editId = document.getElementById('rate-edit-id').value;
   const payload = {
-    company_name: document.getElementById('rate-company').value.trim(),
+    company_name:    document.getElementById('rate-company').value.trim(),
     shipping_method: document.getElementById('rate-method').value.trim(),
-    charge_type: document.getElementById('rate-charge-type').value,
-    rate_price: +document.getElementById('rate-price').value,
+    weight_rate:     +document.getElementById('rate-weight-rate').value || 0,
+    volume_rate:     +document.getElementById('rate-volume-rate').value || 0,
   };
-  if (!payload.company_name || !payload.shipping_method) { toast('กรุณากรอกให้ครบ', 'error'); return; }
+  if (!payload.company_name || !payload.shipping_method) { toast('กรุณากรอกชื่อบริษัทและวิธีขนส่ง', 'error'); return; }
+  if (!payload.weight_rate && !payload.volume_rate) { toast('กรุณากรอกอย่างน้อย 1 เรท (น้ำหนัก หรือ ปริมาตร)', 'error'); return; }
   try {
     if (editId) await API.put(`/logistics-rates/${editId}`, payload);
     else        await API.post('/logistics-rates', payload);

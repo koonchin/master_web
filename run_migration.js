@@ -55,6 +55,12 @@ const statements = [
   `ALTER TABLE po_headers ADD COLUMN actual_billed_volume DECIMAL(10,4) DEFAULT 0`,
   `ALTER TABLE po_headers ADD COLUMN discrepancy_ack TINYINT(1) DEFAULT 0`,
   `ALTER TABLE po_items ADD COLUMN is_extra TINYINT(1) DEFAULT 0`,
+  // Add weight_rate + volume_rate columns to Logistics_Rates (replaces charge_type+rate_price logic)
+  `ALTER TABLE Logistics_Rates ADD COLUMN weight_rate DECIMAL(10,2) DEFAULT 0`,
+  `ALTER TABLE Logistics_Rates ADD COLUMN volume_rate DECIMAL(10,2) DEFAULT 0`,
+  // Migrate existing single-rate rows to the new columns (only when new columns are still 0)
+  `UPDATE Logistics_Rates SET weight_rate = rate_price WHERE charge_type = 'Weight' AND weight_rate = 0`,
+  `UPDATE Logistics_Rates SET volume_rate = rate_price WHERE charge_type = 'Volume' AND volume_rate = 0`,
   `CREATE TABLE IF NOT EXISTS po_status_history (
     id         INT AUTO_INCREMENT PRIMARY KEY,
     po_number  VARCHAR(50) NOT NULL,
