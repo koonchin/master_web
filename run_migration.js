@@ -55,6 +55,14 @@ const statements = [
   `ALTER TABLE po_headers ADD COLUMN actual_billed_volume DECIMAL(10,4) DEFAULT 0`,
   `ALTER TABLE po_headers ADD COLUMN discrepancy_ack TINYINT(1) DEFAULT 0`,
   `ALTER TABLE po_items ADD COLUMN is_extra TINYINT(1) DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS po_status_history (
+    id         INT AUTO_INCREMENT PRIMARY KEY,
+    po_number  VARCHAR(50) NOT NULL,
+    status     VARCHAR(30) NOT NULL,
+    status_date DATE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_po_status (po_number, status)
+  )`,
 ];
 
 (async () => {

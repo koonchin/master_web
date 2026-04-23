@@ -428,6 +428,9 @@ textarea.form-control  { resize: vertical; min-height: 80px; }
 .step-label { font-size: 10px; color: var(--color-muted-light); text-align: center; font-weight: 600; white-space: nowrap; }
 .status-step.done    .step-label { color: var(--color-muslin-blue); }
 .status-step.current .step-label { color: var(--color-text); }
+.step-date  { font-size: 9px; color: var(--color-muted-light); text-align: center; white-space: nowrap; margin-top: -2px; }
+.status-step.done    .step-date { color: var(--color-muslin-blue); opacity: 0.75; }
+.status-step.current .step-date { color: var(--color-text); opacity: 0.65; }
 
 /* ============================================================
    ETA BAR

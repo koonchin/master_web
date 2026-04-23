@@ -63,6 +63,11 @@ function formatDate(s) {
   const d = parseDate(s);
   return d.toLocaleDateString('th-TH', { day: '2-digit', month: 'short', year: 'numeric' });
 }
+function formatDateShort(s) {
+  if (!s) return '';
+  const d = parseDate(s);
+  return d.toLocaleDateString('th-TH', { day: '2-digit', month: 'short' });
+}
 function today() { return new Date().toISOString().split('T')[0]; }
 function addDays(dateStr, n) {
   if (!dateStr) return null;
@@ -570,11 +575,22 @@ async function renderPODetail(body, topbar) {
     </div>`;
 
   const stepIndex = STATUS_FLOW.indexOf(po.status);
+  // Build a map of status → date from history + known header fields
+  const histMap = {};
+  (po.status_history || []).forEach(h => {
+    histMap[h.status] = h.status_date ? h.status_date.substring(0, 10) : null;
+  });
+  // Fill in dates from po_headers if not already in history
+  if (!histMap['Shipped_CN'] && po.departure_date) histMap['Shipped_CN'] = po.departure_date.substring(0, 10);
+  if (!histMap['Draft'] && po.order_date) histMap['Draft'] = po.order_date.substring(0, 10);
+
   const stepsHTML = STATUS_FLOW.map((s, i) => {
     const isDone = i < stepIndex; const isCurrent = i === stepIndex;
+    const dateStr = histMap[s] ? `<div class="step-date">${formatDateShort(histMap[s])}</div>` : '';
     return `<div class="status-step ${isDone ? 'done' : ''} ${isCurrent ? 'current' : ''}">
       <div class="step-dot">${isDone ? '✓' : STATUS_ICONS[s]}</div>
       <div class="step-label">${STATUS_LABELS[s]}</div>
+      ${dateStr}
     </div>`;
   }).join('');
 
@@ -1139,6 +1155,8 @@ function openEditStatusModal(poNumber) {
   document.getElementById('modal-po-number').textContent = poNumber;
   document.getElementById('edit-order-date').value = po.order_date ? po.order_date.substring(0, 10) : '';
   document.getElementById('edit-status').value = po.status;
+  // Default status_date to today
+  document.getElementById('edit-status-date').value = new Date().toISOString().substring(0, 10);
   document.getElementById('edit-departure').value = po.departure_date ? po.departure_date.substring(0, 10) : '';
   document.getElementById('edit-logistics-company').value = po.logistics_company || '';
   document.getElementById('edit-shipping-method').value = po.shipping_method || '';
@@ -1153,14 +1171,15 @@ function toggleDepartureField() {
 }
 async function saveStatusUpdate() {
   const po = editingPO; if (!po) return;
-  const order_date       = document.getElementById('edit-order-date')?.value || null;
-  const status           = document.getElementById('edit-status').value;
-  const departure_date   = document.getElementById('edit-departure').value || null;
+  const order_date        = document.getElementById('edit-order-date')?.value || null;
+  const status            = document.getElementById('edit-status').value;
+  const status_date       = document.getElementById('edit-status-date')?.value || null;
+  const departure_date    = document.getElementById('edit-departure').value || null;
   const logistics_company = document.getElementById('edit-logistics-company')?.value || null;
-  const shipping_method  = document.getElementById('edit-shipping-method')?.value || null;
-  const est_lead_time    = parseInt(document.getElementById('edit-leadtime').value);
+  const shipping_method   = document.getElementById('edit-shipping-method')?.value || null;
+  const est_lead_time     = parseInt(document.getElementById('edit-leadtime').value);
   try {
-    await API.put(`/po/${po.po_number}`, { order_date, status, departure_date, logistics_company, shipping_method, est_lead_time });
+    await API.put(`/po/${po.po_number}`, { order_date, status, status_date, departure_date, logistics_company, shipping_method, est_lead_time });
     hideModal('edit-status-modal');
     toast(`อัปเดต ${po.po_number} → ${STATUS_LABELS[status]} สำเร็จ`, 'success');
     // Refresh data

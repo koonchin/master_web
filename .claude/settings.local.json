@@ -35,7 +35,23 @@
       "Bash(wmic process *)",
       "Bash(taskkill /PID 33100 /F)",
       "Bash(curl -s http://localhost:4002/api/health)",
-      "Bash(curl -s \"http://localhost:4002/api/export?year=2026\")"
+      "Bash(curl -s \"http://localhost:4002/api/export?year=2026\")",
+      "Bash(node run_migration.js)",
+      "Bash(curl -s http://localhost:3000/api/logistics-rates)",
+      "Bash(curl -s http://localhost:3000/api/item-master)",
+      "Bash(curl -s -X POST http://localhost:3000/api/logistics/compare -H \"Content-Type: application/json\" -d '{\"weight\":1200,\"volume\":0.48}')",
+      "PowerShell(Invoke-WebRequest -Uri \"http://localhost:3000/api/logistics-rates\" -UseBasicParsing)",
+      "WebFetch(domain:api.anthropic.com)",
+      "Bash(copy \"C:\\\\Users\\\\008\\\\.claude\\\\projects\\\\C--Users-008-Desktop-master-web\\\\86a8bfa0-8f57-48c2-ac97-82c9990e6567\\\\tool-results\\\\ABCArizonaFlare-Thin-Trial.woff\" \"C:\\\\Users\\\\008\\\\Desktop\\\\master web\\\\fonts\\\\\" && copy \"C:\\\\Users\\\\008\\\\.claude\\\\projects\\\\C--Users-008-Desktop-master-web\\\\86a8bfa0-8f57-48c2-ac97-82c9990e6567\\\\tool-results\\\\Delighted_Sunrise.ttf\" \"C:\\\\Users\\\\008\\\\Desktop\\\\master web\\\\fonts\\\\\")",
+      "Bash(cp \"C:/Users/008/.claude/projects/C--Users-008-Desktop-master-web/86a8bfa0-8f57-48c2-ac97-82c9990e6567/tool-results/ABCArizonaFlare-Thin-Trial.woff\" \"C:/Users/008/Desktop/master web/fonts/\")",
+      "Bash(cp \"C:/Users/008/.claude/projects/C--Users-008-Desktop-master-web/86a8bfa0-8f57-48c2-ac97-82c9990e6567/tool-results/Delighted_Sunrise.ttf\" \"C:/Users/008/Desktop/master web/fonts/\")",
+      "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); po=data[0] if data else {}; print\\('po_number:', po.get\\('po_number','none'\\)\\); print\\('has discrepancy_ack:', 'discrepancy_ack' in po\\)\")",
+      "Bash(node -e \"const d=require\\('fs'\\).readFileSync\\('/dev/stdin','utf8'\\); const a=JSON.parse\\(d\\); if\\(a[0]\\){const p=a[0]; console.log\\('po_number:',p.po_number,'fields:',Object.keys\\(p\\).join\\(','\\)\\)}\")",
+      "Bash(curl -s \"http://localhost:3000/api/po\")",
+      "Bash(curl -s \"http://127.0.0.1:3000/api/health\")",
+      "Bash(curl -s \"http://127.0.0.1:3000/api/po\")",
+      "Bash(tasklist /FI \"PID eq 21764\")",
+      "Bash(ps -p 21764 -o comm=)"
     ]
   }
 }

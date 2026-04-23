@@ -78,7 +78,7 @@ app.get('/api/po', async (req, res) => {
   }
 });
 
-// GET /api/po/:poNumber — get single PO with items + logs
+// GET /api/po/:poNumber — get single PO with items + logs + status history
 app.get('/api/po/:poNumber', async (req, res) => {
   try {
     const { poNumber } = req.params;
@@ -87,8 +87,12 @@ app.get('/api/po/:poNumber', async (req, res) => {
 
     const [items] = await pool.query('SELECT * FROM po_items WHERE po_number = ?', [poNumber]);
     const [logs] = await pool.query('SELECT * FROM receiving_logs WHERE po_number = ?', [poNumber]);
+    const [history] = await pool.query(
+      'SELECT status, status_date FROM po_status_history WHERE po_number = ? ORDER BY status_date ASC',
+      [poNumber]
+    );
 
-    res.json({ ...po, items, logs });
+    res.json({ ...po, items, logs, status_history: history });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -151,7 +155,7 @@ app.put('/api/po/:poNumber', async (req, res) => {
     const { status, departure_date, est_lead_time, project_name,
             logistics_company, shipping_method,
             order_date, actual_billed_weight, actual_billed_volume,
-            discrepancy_ack } = req.body;
+            discrepancy_ack, status_date } = req.body;
 
     const fields = [];
     const values = [];
@@ -178,6 +182,29 @@ app.put('/api/po/:poNumber', async (req, res) => {
 
     values.push(poNumber);
     await pool.query(`UPDATE po_headers SET ${fields.join(', ')} WHERE po_number = ?`, values);
+
+    // Record status history when status changes
+    if (status !== undefined) {
+      const recordDate = status_date || new Date().toISOString().substring(0, 10);
+      await pool.query(
+        `INSERT INTO po_status_history (po_number, status, status_date)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE status_date = VALUES(status_date)`,
+        [poNumber, status, recordDate]
+      );
+      // Also auto-record Shipped_CN history from departure_date if provided
+      if (status === 'Thai_Customs' || status === 'Arrived' || status === 'Completed') {
+        const [[ph]] = await pool.query('SELECT departure_date FROM po_headers WHERE po_number = ?', [poNumber]);
+        if (ph && ph.departure_date) {
+          const dep = new Date(ph.departure_date).toISOString().substring(0, 10);
+          await pool.query(
+            `INSERT IGNORE INTO po_status_history (po_number, status, status_date) VALUES (?, 'Shipped_CN', ?)`,
+            [poNumber, dep]
+          );
+        }
+      }
+    }
+
     const [[updated]] = await pool.query('SELECT * FROM po_headers WHERE po_number = ?', [poNumber]);
     res.json(updated);
   } catch (err) {
