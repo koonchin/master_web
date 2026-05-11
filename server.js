@@ -5,6 +5,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const pool = require('./db');
+const SftpClient = require('ssh2-sftp-client'); // นำเข้า SFTP Client
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,7 +16,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname)));          // serve frontend
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); // serve uploaded photos
 
-// Ensure uploads folder exists
+// Ensure uploads folder exists (สำหรับเก็บไฟล์ชั่วคราวก่อนส่งไป Server)
 if (!fs.existsSync(path.join(__dirname, 'uploads'))) {
   fs.mkdirSync(path.join(__dirname, 'uploads'));
 }
@@ -365,13 +366,56 @@ app.post('/api/receiving', async (req, res) => {
 });
 
 // ============================================================
-// PHOTO UPLOAD
+// PHOTO UPLOAD (ใช้วิธีโยน SFTP ไปเก็บที่ Server ตัวเอง)
 // ============================================================
-app.post('/api/upload', upload.array('photos', 10), (req, res) => {
+app.post('/api/upload', upload.array('photos', 10), async (req, res) => {
+  const sftp = new SftpClient();
   try {
-    const urls = req.files.map(f => `/uploads/${f.filename}`);
+    // 1. ตรวจสอบว่ามีไฟล์อัปโหลดมาหรือไม่
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded' });
+    }
+
+    // 2. ตั้งค่าการเชื่อมต่อ SFTP
+    await sftp.connect({
+      host: process.env.SFTP_HOST, // ใส่ IP ของ Server คุณใน Render .env
+      port: process.env.SFTP_PORT || 22,
+      username: process.env.SFTP_USER,
+      password: process.env.SFTP_PASSWORD,
+    });
+
+    const urls = [];
+    
+    // 3. วนลูปส่งไฟล์ไปยัง Server ของคุณ
+    for (const file of req.files) {
+      // พาธโฟลเดอร์บน Server ที่คุณต้องการเก็บรูป
+      // **หมายเหตุ:** ต้องแน่ใจว่าสร้างโฟลเดอร์นี้ไว้แล้ว และมีสิทธิ์ (Permission) ในการเขียน
+      const remotePath = `/var/www/html/uploads/${file.filename}`;
+      
+      await sftp.put(file.path, remotePath);
+      
+      // 4. สร้าง URL ของรูป เพื่อ Return ให้ Frontend เอาไปเซฟลง Database
+      // ตัวอย่าง: http://111.222.333.444/uploads/12345.jpg
+      urls.push(`http://${process.env.SFTP_HOST}/uploads/${file.filename}`);
+      
+      // 5. ลบไฟล์ที่เกะกะบนเครื่องชั่วคราวของ Render ทิ้ง
+      if (fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+    }
+
+    await sftp.end();
     res.json({ urls });
+    
   } catch (err) {
+    sftp.end();
+    // ถ้ามี Error เกิดขึ้น ให้คอยเคลียร์ไฟล์ขยะบนเครื่อง Render ด้วย
+    if (req.files) {
+      req.files.forEach(f => {
+        if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
+      });
+    }
+    console.error("SFTP Upload Error:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -487,7 +531,6 @@ app.delete('/api/logistics-rates/:id', async (req, res) => {
 });
 
 // POST /api/logistics/compare
-// Uses max(weight × weight_rate, volume × volume_rate) — whichever is more expensive
 app.post('/api/logistics/compare', async (req, res) => {
   try {
     const { weight = 0, volume = 0 } = req.body;
@@ -521,7 +564,6 @@ app.get('/api/export', async (req, res) => {
     const { year, month, logistics_company, shipping_method, status, date_field } = req.query;
     const conditions = [];
     const params = [];
-    // Resolve date column from date_field param (whitelist to prevent injection)
     const dateColMap = {
       order_date:     'ph.order_date',
       departure_date: 'ph.departure_date',
@@ -593,34 +635,60 @@ app.get('/api/po/:poNumber/images', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /api/po/:poNumber/images — upload PO-level evidence photos
+// POST /api/po/:poNumber/images — upload PO-level evidence photos (ต้องเปลี่ยนให้ใช้ SFTP ด้วยเช่นกัน)
 app.post('/api/po/:poNumber/images', upload.array('photos', 20), async (req, res) => {
+  const sftp = new SftpClient();
   try {
     const { poNumber } = req.params;
     if (!req.files || req.files.length === 0)
       return res.status(400).json({ error: 'No files uploaded' });
-    const urls = req.files.map(f => `/uploads/${f.filename}`);
-    for (const url of urls) {
+
+    await sftp.connect({
+      host: process.env.SFTP_HOST,
+      port: process.env.SFTP_PORT || 22,
+      username: process.env.SFTP_USER,
+      password: process.env.SFTP_PASSWORD,
+    });
+
+    const urls = [];
+    for (const file of req.files) {
+      const remotePath = `/var/www/html/uploads/${file.filename}`;
+      await sftp.put(file.path, remotePath);
+      
+      const fileUrl = `http://${process.env.SFTP_HOST}/uploads/${file.filename}`;
+      urls.push(fileUrl);
+      
       await pool.query(
         'INSERT INTO po_images (po_number, photo_url) VALUES (?,?)',
-        [poNumber, url]
+        [poNumber, fileUrl]
       );
+      
+      if (fs.existsSync(file.path)) fs.unlinkSync(file.path);
     }
+    
+    await sftp.end();
+
     const [rows] = await pool.query(
       'SELECT * FROM po_images WHERE po_number = ? ORDER BY uploaded_at ASC',
       [poNumber]
     );
     res.status(201).json({ urls, images: rows });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    sftp.end();
+    if (req.files) {
+      req.files.forEach(f => {
+        if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
+      });
+    }
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // DELETE /api/po-images/:id — remove one evidence photo
 app.delete('/api/po-images/:id', async (req, res) => {
   try {
-    const [[img]] = await pool.query('SELECT * FROM po_images WHERE id = ?', [req.params.id]);
-    if (!img) return res.status(404).json({ error: 'Image not found' });
-    const filePath = path.join(__dirname, img.photo_url.replace(/^\//, ''));
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    // โค้ดส่วนนี้ลบรูปจากตารางในฐานข้อมูล แต่จะไม่ลบรูปจริงที่อยู่ใน VPS 
+    // หากต้องการลบรูปใน VPS ด้วย ต้องเขียน SFTP.delete() เพิ่มเติม
     await pool.query('DELETE FROM po_images WHERE id = ?', [req.params.id]);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
