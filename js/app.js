@@ -171,6 +171,8 @@ async function renderView(view) {
       case 'wh-receive':      await renderWHReceive(body, topbar); break;
       case 'item-master':     await renderItemMaster(body, topbar); break;
       case 'logistics-rates': await renderLogisticsRates(body, topbar); break;
+      case 'production-order': await renderProductionOrder(body, topbar); break;
+      case 'factory-users':    await renderFactoryUsers(body, topbar); break;
       default:                await renderDashboard(body, topbar);
     }
   } catch (err) {
@@ -2153,6 +2155,210 @@ async function deleteRate(id) {
     await API.del(`/logistics-rates/${id}`);
     toast('ลบสำเร็จ', 'success');
     await renderLogisticsRates(document.getElementById('page-body'), document.getElementById('topbar-inner'));
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ============================================================
+// PRODUCTION ORDER (สร้างใบสั่งผลิต)
+// ============================================================
+let _prodItemCount = 0;
+async function renderProductionOrder(body, topbar) {
+  topbar.innerHTML = `
+    <div class="topbar-left"><h2>📦 สร้างใบสั่งผลิต</h2></div>
+    <div class="topbar-right"><button class="btn-secondary" onclick="navigate('dashboard')">ยกเลิก</button></div>`;
+
+  let factories = [];
+  try { factories = await API.get('/factories'); } catch { factories = []; }
+  try { _itemMasterList = await API.get('/item-master'); } catch { _itemMasterList = []; }
+
+  const factoryOpts = factories.map(f => `<option value="${f.id}">${f.name} — ${f.location || ''}</option>`).join('');
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="card-title mb-4">📋 ข้อมูลใบสั่งผลิต</div>
+      <div class="form-grid form-grid-2">
+        <div class="form-group">
+          <label>โรงงาน <span style="color:#ef4444">*</span></label>
+          <select class="form-control" id="prod-factory">
+            <option value="">-- เลือกโรงงาน --</option>
+            ${factoryOpts}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>ความเร่งด่วน</label>
+          <select class="form-control" id="prod-priority">
+            <option value="Urgent">🔴 Urgent</option>
+            <option value="High">🟠 High</option>
+            <option value="Normal" selected>🟢 Normal</option>
+            <option value="Low">⚪ Low</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>ชื่อคนสั่ง <span style="color:#ef4444">*</span></label>
+          <input class="form-control" id="prod-order-person" placeholder="ชื่อผู้สั่งผลิต">
+        </div>
+        <div class="form-group">
+          <label>กำหนดส่ง <span style="color:#ef4444">*</span></label>
+          <input class="form-control" type="date" id="prod-due-date" value="${today()}">
+        </div>
+        <div class="form-group" style="grid-column:1/-1">
+          <label>หมายเหตุ</label>
+          <textarea class="form-control" id="prod-notes" placeholder="หมายเหตุเพิ่มเติม (ถ้ามี)" rows="2"></textarea>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-title">📦 รายการ SKU</div><button class="btn-secondary btn-sm" onclick="addProdItem()">＋ เพิ่ม SKU</button></div>
+      <datalist id="prod-sku-datalist">${_itemMasterList.map(it => `<option value="${it.item_id}">${it.item_name}</option>`).join('')}</datalist>
+      <div class="items-table-wrap">
+        <table>
+          <thead><tr><th style="width:30px">#</th><th>SKU</th><th style="width:130px">จำนวน</th><th style="width:44px"></th></tr></thead>
+          <tbody id="prod-items-body">
+            <tr id="prod-item-0">
+              <td class="td-muted">1</td>
+              <td><input class="form-control" list="prod-sku-datalist" placeholder="เช่น MP-BJM-001-S" style="border:none;padding:4px 0" autocomplete="off"></td>
+              <td><input class="form-control" type="number" placeholder="0" min="1" style="border:none;padding:4px 0"></td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="flex gap-3" style="justify-content:flex-end">
+      <button class="btn-secondary" onclick="navigate('dashboard')">ยกเลิก</button>
+      <button class="btn-primary" onclick="submitProductionOrder()">📦 สร้างใบสั่งผลิต</button>
+    </div>`;
+
+  _prodItemCount = 1;
+}
+
+function addProdItem() {
+  const idx = _prodItemCount++;
+  const tbody = document.getElementById('prod-items-body');
+  const tr = document.createElement('tr');
+  tr.id = `prod-item-${idx}`;
+  tr.innerHTML = `
+    <td class="td-muted">${idx + 1}</td>
+    <td><input class="form-control" list="prod-sku-datalist" placeholder="SKU" style="border:none;padding:4px 0" autocomplete="off"></td>
+    <td><input class="form-control" type="number" placeholder="0" min="1" style="border:none;padding:4px 0"></td>
+    <td><button style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:18px">✕</button></td>`;
+  tr.querySelector('button').onclick = () => { tr.remove(); reindexProdItems(); };
+  tbody.appendChild(tr);
+}
+
+function reindexProdItems() {
+  const rows = document.querySelectorAll('#prod-items-body tr');
+  rows.forEach((tr, i) => { tr.querySelector('td').textContent = i + 1; });
+}
+
+async function submitProductionOrder() {
+  const factoryId = document.getElementById('prod-factory').value;
+  const priority = document.getElementById('prod-priority').value;
+  const orderPerson = document.getElementById('prod-order-person').value.trim();
+  const dueDate = document.getElementById('prod-due-date').value;
+  const notes = document.getElementById('prod-notes').value.trim();
+
+  if (!factoryId) { toast('กรุณาเลือกโรงงาน', 'error'); return; }
+  if (!orderPerson) { toast('กรุณากรอกชื่อคนสั่ง', 'error'); return; }
+  if (!dueDate) { toast('กรุณาระบุกำหนดส่ง', 'error'); return; }
+
+  const rows = document.querySelectorAll('#prod-items-body tr');
+  const items = [];
+  for (const row of rows) {
+    const inputs = row.querySelectorAll('input');
+    const sku = inputs[0]?.value.trim();
+    const qty = parseInt(inputs[1]?.value || '0');
+    if (sku && qty > 0) items.push({ sku, quantity: qty });
+  }
+  if (items.length === 0) { toast('กรุณาเพิ่มอย่างน้อย 1 SKU', 'error'); return; }
+
+  try {
+    await API.post('/production-orders', {
+      factory_id: +factoryId,
+      priority,
+      order_person: orderPerson,
+      due_date: dueDate,
+      notes,
+      items
+    });
+    toast('สร้างใบสั่งผลิตสำเร็จ', 'success');
+    navigate('dashboard');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+// ============================================================
+// FACTORY USERS (จัดการ User โรงงาน)
+// ============================================================
+async function renderFactoryUsers(body, topbar) {
+  topbar.innerHTML = `
+    <div class="topbar-left"><h2>👥 จัดการ User โรงงาน</h2><p>สร้าง username / password สำหรับแต่ละโรงงาน</p></div>`;
+
+  let factories = [];
+  try { factories = await API.get('/factories'); } catch { factories = []; }
+
+  const rows = factories.length ? factories.map(f => `
+    <tr>
+      <td><strong>${f.name}</strong></td>
+      <td>${f.location || '-'}</td>
+      <td><button class="btn-primary btn-sm" onclick="openFactoryUserModal(${f.id}, '${f.name.replace(/'/g, "\\'")}')">👤 สร้าง User</button></td>
+    </tr>`).join('') :
+    `<tr><td colspan="3"><div class="empty-state"><div class="empty-icon">🏭</div><p>ยังไม่มีข้อมูลโรงงาน</p></div></td></tr>`;
+
+  body.innerHTML = `
+    <div class="card p-0">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ชื่อโรงงาน</th><th>ที่ตั้ง</th><th style="width:160px">Actions</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="fu-modal" style="display:none" onclick="if(event.target===this)hideModal('fu-modal')">
+      <div class="modal" style="max-width:440px">
+        <div class="modal-header">
+          <h3 id="fu-modal-title">👤 สร้าง User โรงงาน</h3>
+          <button class="modal-close" onclick="hideModal('fu-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="fu-factory-id">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Username <span style="color:#ef4444">*</span></label>
+              <input class="form-control" id="fu-username" placeholder="ชื่อผู้ใช้">
+            </div>
+            <div class="form-group">
+              <label>Password <span style="color:#ef4444">*</span></label>
+              <input class="form-control" id="fu-password" type="password" placeholder="รหัสผ่าน">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="hideModal('fu-modal')">ยกเลิก</button>
+          <button class="btn-primary" onclick="saveFactoryUser()">💾 บันทึก</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function openFactoryUserModal(factoryId, factoryName) {
+  document.getElementById('fu-modal-title').textContent = `👤 สร้าง User — ${factoryName}`;
+  document.getElementById('fu-factory-id').value = factoryId;
+  document.getElementById('fu-username').value = '';
+  document.getElementById('fu-password').value = '';
+  showModal('fu-modal');
+}
+
+async function saveFactoryUser() {
+  const factoryId = document.getElementById('fu-factory-id').value;
+  const username = document.getElementById('fu-username').value.trim();
+  const password = document.getElementById('fu-password').value;
+  if (!username || !password) { toast('กรุณากรอก username และ password', 'error'); return; }
+  try {
+    await API.post(`/factories/${factoryId}/users`, { username, password });
+    hideModal('fu-modal');
+    toast('สร้าง User สำเร็จ', 'success');
+    await renderFactoryUsers(document.getElementById('page-body'), document.getElementById('topbar-inner'));
   } catch (err) { toast(err.message, 'error'); }
 }
 
