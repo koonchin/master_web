@@ -81,6 +81,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/factories',         require('./routes/factories'));
 app.use('/api/production-orders', require('./routes/production-orders'));
 app.use('/api/shipments',         require('./routes/shipments'));
+app.use('/api/users',             require('./routes/users'));
 app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'login.html')));
 
 // ============================================================
@@ -684,6 +685,9 @@ app.listen(PORT, async () => {
   try {
     await pool.query('SELECT 1');
     console.log(`✅ MySQL connected — ${process.env.DB_HOST}/${process.env.DB_NAME}`);
+    // Auto-add permissions column if missing
+    try { await pool.query('SELECT permissions FROM users LIMIT 1'); }
+    catch { await pool.query("ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT '[]'"); console.log('✅ Added permissions column'); }
   } catch (err) {
     console.error(`❌ MySQL connection failed: ${err.message}`);
   }

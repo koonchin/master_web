@@ -15,41 +15,39 @@ let dashFilter = { dateField: 'order_date', year: '', month: '', logistics_compa
 let _itemMasterList = [];   // cache for Item_Master
 let _logisticsRates = [];   // cache for Logistics_Rates
 
+// --- Auth State ---
+let _authToken = localStorage.getItem('auth_token') || '';
+let _currentUser = JSON.parse(localStorage.getItem('auth_user') || 'null');
+
 // --- API Layer ---
 const API = {
-  async get(path) {
-    const res = await fetch(API_BASE + path);
-    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+  _ah() { return _authToken ? { 'Authorization': 'Bearer ' + _authToken } : {}; },
+  async _chk(res) {
+    if (res.status === 401) { doLogout(); throw new Error('กรุณาเข้าสู่ระบบใหม่'); }
+    if (!res.ok) { let m; try { m = (await res.json()).error; } catch { m = res.statusText; } throw new Error(m || res.statusText); }
     return res.json();
+  },
+  async get(path) {
+    return this._chk(await fetch(API_BASE + path, { headers: this._ah() }));
   },
   async post(path, body) {
-    const res = await fetch(API_BASE + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-    return res.json();
+    return this._chk(await fetch(API_BASE + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...this._ah() }, body: JSON.stringify(body) }));
   },
   async put(path, body) {
-    const res = await fetch(API_BASE + path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-    return res.json();
+    return this._chk(await fetch(API_BASE + path, { method: 'PUT', headers: { 'Content-Type': 'application/json', ...this._ah() }, body: JSON.stringify(body) }));
   },
   async del(path) {
-    const res = await fetch(API_BASE + path, { method: 'DELETE' });
-    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-    return res.json();
+    return this._chk(await fetch(API_BASE + path, { method: 'DELETE', headers: this._ah() }));
   },
   async uploadPhotos(files) {
     const form = new FormData();
     files.forEach(f => form.append('photos', f));
-    const res = await fetch(API_BASE + '/upload', { method: 'POST', body: form });
-    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-    return res.json(); // { urls: [...] }
+    return this._chk(await fetch(API_BASE + '/upload', { method: 'POST', headers: this._ah(), body: form }));
   },
   async uploadPOImages(poNumber, files) {
     const form = new FormData();
     files.forEach(f => form.append('photos', f));
-    const res = await fetch(API_BASE + `/po/${poNumber}/images`, { method: 'POST', body: form });
-    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-    return res.json(); // { urls, images }
+    return this._chk(await fetch(API_BASE + `/po/${poNumber}/images`, { method: 'POST', headers: this._ah(), body: form }));
   },
   async deletePOImage(id) {
     return this.del(`/po-images/${id}`);
@@ -173,6 +171,7 @@ async function renderView(view) {
       case 'logistics-rates': await renderLogisticsRates(body, topbar); break;
       case 'production-order': await renderProductionOrder(body, topbar); break;
       case 'factory-users':    await renderFactoryUsers(body, topbar); break;
+      case 'user-management':  await renderUserManagement(body, topbar); break;
       default:                await renderDashboard(body, topbar);
     }
   } catch (err) {
@@ -2480,10 +2479,247 @@ function setRole(role) {
 }
 
 // ============================================================
+// AUTH & PERMISSIONS
+// ============================================================
+function hasPermission(perm) {
+  if (!_currentUser) return false;
+  if (_currentUser.role === 'admin') return true;
+  return (_currentUser.permissions || []).includes(perm);
+}
+
+function showLogin() {
+  document.getElementById('app-shell').style.display = 'none';
+  document.getElementById('mobile-bottom-nav').style.display = 'none';
+  const el = document.getElementById('login-screen');
+  el.style.display = 'flex';
+  el.innerHTML = `
+    <div style="background:#fff;border-radius:16px;padding:40px;width:100%;max-width:400px;box-shadow:0 8px 32px rgba(0,0,0,.12)">
+      <div style="text-align:center;margin-bottom:24px">
+        <img src="img/logo.jpg" style="width:64px;height:64px;border-radius:12px;margin-bottom:12px">
+        <h2 style="margin:0;color:#21373C;font-size:20px">PO Tracking System</h2>
+        <p style="margin:4px 0 0;color:#64748b;font-size:14px">Muslin Pajamas</p>
+      </div>
+      <form onsubmit="doLogin(event)">
+        <div style="margin-bottom:12px">
+          <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:4px">Username</label>
+          <input id="login-user" class="form-control" placeholder="ชื่อผู้ใช้" autocomplete="username" style="width:100%;box-sizing:border-box">
+        </div>
+        <div style="margin-bottom:16px">
+          <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:4px">Password</label>
+          <input id="login-pass" type="password" class="form-control" placeholder="รหัสผ่าน" autocomplete="current-password" style="width:100%;box-sizing:border-box">
+        </div>
+        <button type="submit" class="btn-primary" style="width:100%;padding:10px;font-size:15px" id="login-btn">🔐 เข้าสู่ระบบ</button>
+        <div id="login-error" style="display:none;margin-top:12px;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#dc2626;font-size:13px;text-align:center"></div>
+      </form>
+    </div>`;
+  setTimeout(() => document.getElementById('login-user')?.focus(), 100);
+}
+
+async function doLogin(e) {
+  e.preventDefault();
+  const username = document.getElementById('login-user').value.trim();
+  const password = document.getElementById('login-pass').value;
+  const errEl = document.getElementById('login-error');
+  const btn = document.getElementById('login-btn');
+  if (!username || !password) { errEl.textContent = 'กรุณากรอก username และ password'; errEl.style.display = 'block'; return; }
+  btn.disabled = true; btn.textContent = '⏳ กำลังเข้าสู่ระบบ...';
+  try {
+    const res = await fetch(API_BASE + '/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Login failed');
+    _authToken = data.token;
+    _currentUser = { username: data.username, role: data.role, permissions: data.permissions || [], factory_id: data.factory_id };
+    localStorage.setItem('auth_token', _authToken);
+    localStorage.setItem('auth_user', JSON.stringify(_currentUser));
+    document.getElementById('login-screen').style.display = 'none';
+    document.getElementById('app-shell').style.display = '';
+    document.getElementById('mobile-bottom-nav').style.display = '';
+    applyPermissions();
+    setRole(hasPermission('purchase') ? 'purchase' : 'warehouse');
+  } catch (err) {
+    errEl.textContent = err.message; errEl.style.display = 'block';
+  } finally { btn.disabled = false; btn.textContent = '🔐 เข้าสู่ระบบ'; }
+}
+
+function doLogout() {
+  _authToken = '';
+  _currentUser = null;
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('auth_user');
+  showLogin();
+}
+
+function applyPermissions() {
+  const info = document.getElementById('sidebar-user-info');
+  if (info && _currentUser) {
+    info.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(255,255,255,.08);border-radius:8px">
+        <div style="width:32px;height:32px;border-radius:50%;background:#D4A574;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff">${_currentUser.username.charAt(0).toUpperCase()}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_currentUser.username}</div>
+          <div style="font-size:11px;color:rgba(255,255,255,.6)">${_currentUser.role === 'admin' ? 'Admin' : 'User'}</div>
+        </div>
+        <button onclick="doLogout()" style="background:none;border:none;color:rgba(255,255,255,.5);cursor:pointer;font-size:16px;padding:4px" title="ออกจากระบบ">⏻</button>
+      </div>`;
+  }
+  // Role toggle
+  const purchaseBtn = document.querySelector('[data-role="purchase"]');
+  const warehouseBtn = document.querySelector('[data-role="warehouse"]');
+  const roleGroup = document.querySelector('.sidebar-role');
+  if (purchaseBtn) purchaseBtn.style.display = hasPermission('purchase') ? '' : 'none';
+  if (warehouseBtn) warehouseBtn.style.display = hasPermission('warehouse') ? '' : 'none';
+  if (roleGroup) roleGroup.style.display = (hasPermission('purchase') && hasPermission('warehouse')) ? '' : 'none';
+  // Admin section
+  const secAdmin = document.getElementById('nav-section-admin');
+  if (secAdmin) {
+    const showFU = hasPermission('factory_users');
+    const showUM = hasPermission('user_management');
+    secAdmin.style.display = (showFU || showUM) ? '' : 'none';
+    const fuBtn = secAdmin.querySelector('[data-view="factory-users"]');
+    const umBtn = secAdmin.querySelector('[data-view="user-management"]');
+    if (fuBtn) fuBtn.style.display = showFU ? '' : 'none';
+    if (umBtn) umBtn.style.display = showUM ? '' : 'none';
+  }
+}
+
+// ============================================================
+// USER MANAGEMENT VIEW
+// ============================================================
+const PERM_LABELS = { purchase: '🛒 จัดซื้อ', warehouse: '🏭 คลัง', factory_users: '👥 User โรงงาน', user_management: '🔑 User ระบบ' };
+const ALL_PERMS = ['purchase','warehouse','factory_users','user_management'];
+
+async function renderUserManagement(body, topbar) {
+  topbar.innerHTML = `
+    <h1 class="page-title">🔑 จัดการ User ระบบ</h1>
+    <span class="page-subtitle">สร้างและจัดการบัญชีผู้ใช้งาน</span>
+    <div style="flex:1"></div>
+    <button class="btn-primary" onclick="openUserModal()">＋ เพิ่ม User</button>`;
+
+  let users = [];
+  try { users = await API.get('/users'); } catch {}
+
+  body.innerHTML = `
+    <div class="card" style="margin:20px;overflow:auto">
+      <table class="table-wrap" style="width:100%">
+        <thead><tr><th>Username</th><th>Role</th><th>สิทธิ์การเข้าถึง</th><th>สร้างเมื่อ</th><th>ACTIONS</th></tr></thead>
+        <tbody>
+          ${!users.length ? '<tr><td colspan="5" style="text-align:center;padding:40px;color:#94a3b8">ยังไม่มี User</td></tr>' :
+            users.map(u => `<tr>
+              <td><strong>${u.username}</strong></td>
+              <td><span style="background:${u.role==='admin'?'#fef3c7;color:#92400e':'#e0f2fe;color:#0369a1'};padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">${u.role}</span></td>
+              <td style="font-size:12px">${u.role==='admin' ? '<span style="color:#92400e">ทั้งหมด (Admin)</span>' : (u.permissions||[]).map(p => PERM_LABELS[p]||p).join(', ') || '<span style="color:#94a3b8">ไม่มีสิทธิ์</span>'}</td>
+              <td style="font-size:12px;color:#64748b">${u.created_at ? new Date(u.created_at).toLocaleDateString('th-TH') : '-'}</td>
+              <td>
+                <button class="btn-sm btn-secondary" onclick="openUserModal(${u.user_id})">แก้ไข</button>
+                ${u.role!=='admin' ? `<button class="btn-sm" style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca" onclick="deleteUser(${u.user_id},'${u.username}')">ลบ</button>` : ''}
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="modal-overlay" id="um-modal" style="display:none" onclick="if(event.target===this)hideModal('um-modal')">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header">
+          <h3 id="um-modal-title">เพิ่ม User ใหม่</h3>
+          <button class="modal-close" onclick="hideModal('um-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="um-edit-id">
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div class="form-group">
+              <label>Username <span style="color:#ef4444">*</span></label>
+              <input class="form-control" id="um-username" placeholder="ชื่อผู้ใช้">
+            </div>
+            <div class="form-group">
+              <label>Password <span id="um-pass-req" style="color:#ef4444">*</span></label>
+              <input class="form-control" id="um-password" type="password" placeholder="รหัสผ่าน">
+              <span class="hint" id="um-pass-hint" style="display:none">เว้นว่างถ้าไม่ต้องการเปลี่ยน</span>
+            </div>
+            <div class="form-group">
+              <label>Role</label>
+              <select class="form-control" id="um-role" onchange="document.getElementById('um-perms-group').style.display=this.value==='admin'?'none':''">
+                <option value="user">User</option>
+                <option value="admin">Admin (เข้าถึงทั้งหมด)</option>
+              </select>
+            </div>
+            <div class="form-group" id="um-perms-group">
+              <label>สิทธิ์การเข้าถึง (เลือกได้หลายรายการ)</label>
+              <div style="display:flex;flex-direction:column;gap:8px;margin-top:4px">
+                ${ALL_PERMS.map(p => `<label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer">
+                  <input type="checkbox" id="um-perm-${p}" value="${p}"> ${PERM_LABELS[p]}
+                </label>`).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="hideModal('um-modal')">ยกเลิก</button>
+          <button class="btn-primary" onclick="saveUser()">💾 บันทึก</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+let _umUsers = [];
+async function openUserModal(userId) {
+  if (userId) {
+    try { _umUsers = await API.get('/users'); } catch { return; }
+    const u = _umUsers.find(x => x.user_id === userId);
+    if (!u) return;
+    document.getElementById('um-modal-title').textContent = '✏ แก้ไข User';
+    document.getElementById('um-edit-id').value = userId;
+    document.getElementById('um-username').value = u.username;
+    document.getElementById('um-password').value = '';
+    document.getElementById('um-pass-req').style.display = 'none';
+    document.getElementById('um-pass-hint').style.display = '';
+    document.getElementById('um-role').value = u.role;
+    document.getElementById('um-perms-group').style.display = u.role === 'admin' ? 'none' : '';
+    ALL_PERMS.forEach(p => { document.getElementById('um-perm-' + p).checked = (u.permissions||[]).includes(p); });
+  } else {
+    document.getElementById('um-modal-title').textContent = '＋ เพิ่ม User ใหม่';
+    document.getElementById('um-edit-id').value = '';
+    document.getElementById('um-username').value = '';
+    document.getElementById('um-password').value = '';
+    document.getElementById('um-pass-req').style.display = '';
+    document.getElementById('um-pass-hint').style.display = 'none';
+    document.getElementById('um-role').value = 'user';
+    document.getElementById('um-perms-group').style.display = '';
+    ALL_PERMS.forEach(p => { document.getElementById('um-perm-' + p).checked = false; });
+  }
+  showModal('um-modal');
+}
+
+async function saveUser() {
+  const id = document.getElementById('um-edit-id').value;
+  const username = document.getElementById('um-username').value.trim();
+  const password = document.getElementById('um-password').value;
+  const role = document.getElementById('um-role').value;
+  const permissions = ALL_PERMS.filter(p => document.getElementById('um-perm-' + p).checked);
+  if (!username) { toast('กรุณากรอก Username', 'error'); return; }
+  if (!id && !password) { toast('กรุณากรอก Password', 'error'); return; }
+  try {
+    const payload = { username, role, permissions };
+    if (password) payload.password = password;
+    if (id) { await API.put('/users/' + id, payload); toast('แก้ไข User สำเร็จ'); }
+    else { payload.password = password; await API.post('/users', payload); toast('สร้าง User สำเร็จ'); }
+    hideModal('um-modal');
+    navigate('user-management');
+  } catch (err) { toast(err.message, 'error'); }
+}
+
+async function deleteUser(id, name) {
+  if (!confirm(`ลบ User "${name}" ?`)) return;
+  try { await API.del('/users/' + id); toast('ลบ User สำเร็จ'); navigate('user-management'); }
+  catch (err) { toast(err.message, 'error'); }
+}
+
+// ============================================================
 // BOOT
 // ============================================================
 document.addEventListener('DOMContentLoaded', async () => {
-  // Check API health
   try {
     const health = await fetch(`${API_BASE}/health`);
     if (!health.ok) throw new Error('Server not responding');
@@ -2498,5 +2734,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       </div>`;
     return;
   }
-  setRole('purchase');
+  if (!_authToken || !_currentUser) { showLogin(); return; }
+  applyPermissions();
+  setRole(hasPermission('purchase') ? 'purchase' : 'warehouse');
 });

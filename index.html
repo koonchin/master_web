@@ -15,7 +15,10 @@
 </head>
 <body>
 
-<div class="app-shell">
+<!-- Login Screen -->
+<div id="login-screen" style="display:none;position:fixed;inset:0;z-index:9999;background:linear-gradient(135deg,#21373C 0%,#2d4a52 100%);align-items:center;justify-content:center;padding:20px"></div>
+
+<div class="app-shell" id="app-shell">
 
   <!-- ========== SIDEBAR ========== -->
   <aside class="sidebar" id="sidebar">
@@ -61,9 +64,6 @@
         <button class="nav-item" data-view="production-order" onclick="navigate('production-order');closeSidebar()">
           <span class="icon">📦</span><span>สร้างใบสั่งผลิต</span>
         </button>
-        <button class="nav-item" data-view="factory-users" onclick="navigate('factory-users');closeSidebar()">
-          <span class="icon">👥</span><span>จัดการ User โรงงาน</span>
-        </button>
       </div>
 
       <div data-role-section="warehouse" style="display:none">
@@ -72,8 +72,20 @@
           <span class="icon">🔍</span><span>ค้นหา & รับสินค้า</span>
         </button>
       </div>
+
+      <div id="nav-section-admin" style="display:none">
+        <div class="nav-section-label">จัดการระบบ</div>
+        <button class="nav-item" data-view="factory-users" onclick="navigate('factory-users');closeSidebar()">
+          <span class="icon">👥</span><span>จัดการ User โรงงาน</span>
+        </button>
+        <button class="nav-item" data-view="user-management" onclick="navigate('user-management');closeSidebar()">
+          <span class="icon">🔑</span><span>จัดการ User ระบบ</span>
+        </button>
+      </div>
     </nav>
 
+    <!-- User info -->
+    <div id="sidebar-user-info" style="padding:8px 16px"></div>
     <!-- Brand tagline -->
     <div class="sidebar-tagline">Comfort you can live in.</div>
   </aside>
