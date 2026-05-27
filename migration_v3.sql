@@ -126,6 +126,12 @@ ALTER TABLE receiving_logs
 INSERT IGNORE INTO factories (name) VALUES ('Factory A (Demo)');
 
 -- ============================================================
+-- v3.1 patch: add order_person to production_orders
+-- ============================================================
+ALTER TABLE production_orders
+  ADD COLUMN IF NOT EXISTS order_person VARCHAR(64) DEFAULT NULL AFTER project_name;
+
+-- ============================================================
 -- Admin user: สร้างแยกต่างหากด้วย node create_admin.js
 -- ============================================================
 SELECT 'run node create_admin.js to create admin user' AS notice
