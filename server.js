@@ -685,9 +685,11 @@ app.listen(PORT, async () => {
   try {
     await pool.query('SELECT 1');
     console.log(`✅ MySQL connected — ${process.env.DB_HOST}/${process.env.DB_NAME}`);
-    // Auto-add permissions column if missing
+    // Auto-migrate: permissions column + role enum
     try { await pool.query('SELECT permissions FROM users LIMIT 1'); }
-    catch { await pool.query("ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT '[]'"); console.log('✅ Added permissions column'); }
+    catch { await pool.query("ALTER TABLE users ADD COLUMN permissions TEXT"); console.log('✅ Added permissions column'); }
+    try { await pool.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','factory','user') NOT NULL"); }
+    catch {}
   } catch (err) {
     console.error(`❌ MySQL connection failed: ${err.message}`);
   }
