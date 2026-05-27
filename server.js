@@ -14,6 +14,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(require('./middleware/audit'));
 app.use(express.static(path.join(__dirname)));          // serve frontend
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); // serve uploaded photos
 
@@ -677,6 +678,46 @@ app.delete('/api/po-images/:id', async (req, res) => {
 });
 
 // ============================================================
+// ACTIVITY LOGS
+// ============================================================
+const { requireAdmin } = require('./middleware/auth');
+
+app.get('/api/logs', requireAdmin, async (req, res) => {
+  try {
+    const { user, process, action, from, to, page = 1, limit = 50 } = req.query;
+    const conds = [], params = [];
+    if (user)    { conds.push('username LIKE ?');        params.push('%' + user + '%'); }
+    if (process) { conds.push('process = ?');            params.push(process); }
+    if (action)  { conds.push('action = ?');             params.push(action); }
+    if (from)    { conds.push('created_at >= ?');        params.push(from); }
+    if (to)      { conds.push('created_at <= ?');        params.push(to + ' 23:59:59'); }
+    const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+    const offset = (Math.max(1, +page) - 1) * +limit;
+
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) as total FROM activity_logs ${where}`, params);
+    const [logs] = await pool.query(
+      `SELECT * FROM activity_logs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [...params, +limit, offset]
+    );
+    res.json({ logs, total, page: +page, limit: +limit });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/logs/processes', requireAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT DISTINCT process FROM activity_logs ORDER BY process');
+    res.json(rows.map(r => r.process));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/logs/users', requireAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT DISTINCT username FROM activity_logs ORDER BY username');
+    res.json(rows.map(r => r.username));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ============================================================
 // START SERVER
 // ============================================================
 app.listen(PORT, async () => {
@@ -690,6 +731,14 @@ app.listen(PORT, async () => {
     catch { await pool.query("ALTER TABLE users ADD COLUMN permissions TEXT"); console.log('✅ Added permissions column'); }
     try { await pool.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','factory','user') NOT NULL"); }
     catch {}
+    // Auto-create activity_logs table
+    await pool.query(`CREATE TABLE IF NOT EXISTS activity_logs (
+      log_id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT, username VARCHAR(100), action VARCHAR(50), process VARCHAR(100),
+      target_id VARCHAR(100), detail TEXT, ip_address VARCHAR(45),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_user (user_id), INDEX idx_process (process), INDEX idx_created (created_at)
+    )`).catch(() => {});
   } catch (err) {
     console.error(`❌ MySQL connection failed: ${err.message}`);
   }

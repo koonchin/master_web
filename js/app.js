@@ -172,6 +172,7 @@ async function renderView(view) {
       case 'production-order': await renderProductionOrder(body, topbar); break;
       case 'factory-users':    await renderFactoryUsers(body, topbar); break;
       case 'user-management':  await renderUserManagement(body, topbar); break;
+      case 'activity-logs':    await renderActivityLogs(body, topbar); break;
       default:                await renderDashboard(body, topbar);
     }
   } catch (err) {
@@ -2580,8 +2581,10 @@ function applyPermissions() {
     secAdmin.style.display = (showFU || showUM) ? '' : 'none';
     const fuBtn = secAdmin.querySelector('[data-view="factory-users"]');
     const umBtn = secAdmin.querySelector('[data-view="user-management"]');
+    const alBtn = secAdmin.querySelector('[data-view="activity-logs"]');
     if (fuBtn) fuBtn.style.display = showFU ? '' : 'none';
     if (umBtn) umBtn.style.display = showUM ? '' : 'none';
+    if (alBtn) alBtn.style.display = showUM ? '' : 'none';
   }
 }
 
@@ -2714,6 +2717,153 @@ async function deleteUser(id, name) {
   if (!confirm(`ลบ User "${name}" ?`)) return;
   try { await API.del('/users/' + id); toast('ลบ User สำเร็จ'); navigate('user-management'); }
   catch (err) { toast(err.message, 'error'); }
+}
+
+// ============================================================
+// ACTIVITY LOG VIEW
+// ============================================================
+let _logPage = 1;
+const _logLimit = 30;
+const ACTION_BADGE = { CREATE: '#dcfce7;color:#166534', UPDATE: '#dbeafe;color:#1e40af', DELETE: '#fef2f2;color:#991b1b' };
+const PROCESS_TH = {
+  PO: '📦 PO', PO_ITEM: '📋 PO Item', PO_IMAGE: '🖼 PO Image', RECEIVING: '📥 รับสินค้า',
+  FACTORY: '🏭 โรงงาน', FACTORY_USER: '👥 User โรงงาน', USER: '🔑 User ระบบ',
+  PRODUCTION_ORDER: '📦 ใบสั่งผลิต', ITEM_MASTER: '🗂 Item Master',
+  LOGISTICS: '🚚 Logistics', SHIPMENT: '🚢 Shipment', OTHER: '⚙ อื่นๆ'
+};
+
+async function renderActivityLogs(body, topbar) {
+  let processes = [], users = [];
+  try { processes = await API.get('/logs/processes'); } catch {}
+  try { users = await API.get('/logs/users'); } catch {}
+
+  topbar.innerHTML = `
+    <h1 class="page-title">📜 Activity Log</h1>
+    <span class="page-subtitle">ประวัติการใช้งานระบบ</span>`;
+
+  body.innerHTML = `
+    <div class="card" style="margin:20px;padding:16px">
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin-bottom:16px">
+        <div class="form-group" style="margin:0;min-width:140px">
+          <label style="font-size:12px;font-weight:600">User</label>
+          <select class="form-control" id="log-f-user" style="font-size:13px">
+            <option value="">ทั้งหมด</option>
+            ${users.map(u => `<option value="${u}">${u}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group" style="margin:0;min-width:140px">
+          <label style="font-size:12px;font-weight:600">Process</label>
+          <select class="form-control" id="log-f-process" style="font-size:13px">
+            <option value="">ทั้งหมด</option>
+            ${processes.map(p => `<option value="${p}">${PROCESS_TH[p]||p}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group" style="margin:0;min-width:140px">
+          <label style="font-size:12px;font-weight:600">Action</label>
+          <select class="form-control" id="log-f-action" style="font-size:13px">
+            <option value="">ทั้งหมด</option>
+            <option value="CREATE">CREATE</option>
+            <option value="UPDATE">UPDATE</option>
+            <option value="DELETE">DELETE</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label style="font-size:12px;font-weight:600">จาก</label>
+          <input class="form-control" type="date" id="log-f-from" style="font-size:13px">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label style="font-size:12px;font-weight:600">ถึง</label>
+          <input class="form-control" type="date" id="log-f-to" style="font-size:13px">
+        </div>
+        <button class="btn-primary" style="height:36px;font-size:13px" onclick="_logPage=1;loadLogs()">🔍 ค้นหา</button>
+        <button class="btn-secondary" style="height:36px;font-size:13px" onclick="clearLogFilters()">ล้าง</button>
+      </div>
+      <div id="log-summary" style="font-size:13px;color:#64748b;margin-bottom:8px"></div>
+      <div style="overflow:auto">
+        <table class="table-wrap" style="width:100%;font-size:13px">
+          <thead><tr>
+            <th style="white-space:nowrap">วันเวลา</th><th>User</th><th>Action</th><th>Process</th><th>Target</th><th>รายละเอียด</th>
+          </tr></thead>
+          <tbody id="log-tbody"><tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+      <div id="log-pagination" style="display:flex;justify-content:center;gap:8px;margin-top:16px"></div>
+    </div>`;
+
+  _logPage = 1;
+  loadLogs();
+}
+
+async function loadLogs() {
+  const user = document.getElementById('log-f-user')?.value || '';
+  const process = document.getElementById('log-f-process')?.value || '';
+  const action = document.getElementById('log-f-action')?.value || '';
+  const from = document.getElementById('log-f-from')?.value || '';
+  const to = document.getElementById('log-f-to')?.value || '';
+  const params = new URLSearchParams({ page: _logPage, limit: _logLimit });
+  if (user) params.set('user', user);
+  if (process) params.set('process', process);
+  if (action) params.set('action', action);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+
+  const tbody = document.getElementById('log-tbody');
+  try {
+    const data = await API.get('/logs?' + params.toString());
+    const totalPages = Math.ceil(data.total / _logLimit) || 1;
+
+    document.getElementById('log-summary').textContent = `พบ ${data.total} รายการ — หน้า ${_logPage}/${totalPages}`;
+
+    if (!data.logs.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">ไม่พบข้อมูล</td></tr>';
+    } else {
+      tbody.innerHTML = data.logs.map(l => {
+        const dt = l.created_at ? new Date(l.created_at).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'medium' }) : '-';
+        const badge = ACTION_BADGE[l.action] || '#f1f5f9;color:#475569';
+        let detail = '';
+        try { const d = JSON.parse(l.detail || '{}'); detail = summarizeDetail(d, l.process); } catch { detail = l.detail || ''; }
+        return `<tr>
+          <td style="white-space:nowrap">${dt}</td>
+          <td><strong>${l.username||'-'}</strong></td>
+          <td><span style="background:${badge};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">${l.action}</span></td>
+          <td style="white-space:nowrap">${PROCESS_TH[l.process]||l.process}</td>
+          <td style="font-family:monospace;font-size:12px">${l.target_id||'-'}</td>
+          <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${detail.replace(/"/g,'&quot;')}">${detail||'-'}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    const pag = document.getElementById('log-pagination');
+    pag.innerHTML = '';
+    if (totalPages > 1) {
+      if (_logPage > 1) pag.innerHTML += `<button class="btn-sm btn-secondary" onclick="_logPage--;loadLogs()">← ก่อนหน้า</button>`;
+      pag.innerHTML += `<span style="line-height:28px;font-size:13px;color:#64748b">${_logPage} / ${totalPages}</span>`;
+      if (_logPage < totalPages) pag.innerHTML += `<button class="btn-sm btn-secondary" onclick="_logPage++;loadLogs()">ถัดไป →</button>`;
+    }
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:30px;color:#dc2626">${err.message}</td></tr>`;
+  }
+}
+
+function summarizeDetail(d, process) {
+  if (!d || !Object.keys(d).length) return '';
+  if (d.po_number) return 'PO: ' + d.po_number;
+  if (d.username) return 'User: ' + d.username;
+  if (d.name) return d.name;
+  if (d.sku) return 'SKU: ' + d.sku;
+  if (d.item_id) return 'Item: ' + d.item_id;
+  if (d.company_name) return d.company_name + ' / ' + (d.shipping_method || '');
+  const keys = Object.keys(d).filter(k => k !== 'password' && k !== 'password_hash');
+  return keys.slice(0, 3).map(k => k + '=' + String(d[k]).substring(0, 30)).join(', ');
+}
+
+function clearLogFilters() {
+  ['log-f-user','log-f-process','log-f-action','log-f-from','log-f-to'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  _logPage = 1;
+  loadLogs();
 }
 
 // ============================================================
