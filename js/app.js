@@ -2291,7 +2291,8 @@ async function submitProductionOrder() {
 // ============================================================
 async function renderFactoryUsers(body, topbar) {
   topbar.innerHTML = `
-    <div class="topbar-left"><h2>👥 จัดการ User โรงงาน</h2><p>สร้าง username / password สำหรับแต่ละโรงงาน</p></div>`;
+    <div class="topbar-left"><h2>👥 จัดการ User โรงงาน</h2><p>สร้าง username / password สำหรับแต่ละโรงงาน</p></div>
+    <div class="topbar-right"><button class="btn-primary" onclick="openAddFactoryModal()">＋ เพิ่มโรงงาน</button></div>`;
 
   let factories = [];
   try { factories = await API.get('/factories'); } catch { factories = []; }
@@ -2338,6 +2339,31 @@ async function renderFactoryUsers(body, topbar) {
           <button class="btn-primary" onclick="saveFactoryUser()">💾 บันทึก</button>
         </div>
       </div>
+    </div>
+
+    <div class="modal-overlay" id="af-modal" style="display:none" onclick="if(event.target===this)hideModal('af-modal')">
+      <div class="modal" style="max-width:440px">
+        <div class="modal-header">
+          <h3>🏭 เพิ่มโรงงานใหม่</h3>
+          <button class="modal-close" onclick="hideModal('af-modal')">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>ชื่อโรงงาน <span style="color:#ef4444">*</span></label>
+              <input class="form-control" id="af-name" placeholder="เช่น โรงงาน A, Guangzhou Factory">
+            </div>
+            <div class="form-group">
+              <label>ที่ตั้ง</label>
+              <input class="form-control" id="af-location" placeholder="เช่น Guangzhou, China">
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="hideModal('af-modal')">ยกเลิก</button>
+          <button class="btn-primary" onclick="saveNewFactory()">💾 บันทึก</button>
+        </div>
+      </div>
     </div>`;
 }
 
@@ -2347,6 +2373,24 @@ function openFactoryUserModal(factoryId, factoryName) {
   document.getElementById('fu-username').value = '';
   document.getElementById('fu-password').value = '';
   showModal('fu-modal');
+}
+
+function openAddFactoryModal() {
+  document.getElementById('af-name').value = '';
+  document.getElementById('af-location').value = '';
+  showModal('af-modal');
+}
+
+async function saveNewFactory() {
+  const name = document.getElementById('af-name').value.trim();
+  const location = document.getElementById('af-location').value.trim();
+  if (!name) { toast('กรุณากรอกชื่อโรงงาน', 'error'); return; }
+  try {
+    await API.post('/factories', { name, location });
+    hideModal('af-modal');
+    toast('เพิ่มโรงงานสำเร็จ', 'success');
+    await renderFactoryUsers(document.getElementById('page-body'), document.getElementById('topbar-inner'));
+  } catch (err) { toast(err.message, 'error'); }
 }
 
 async function saveFactoryUser() {
