@@ -127,9 +127,21 @@ INSERT IGNORE INTO factories (name) VALUES ('Factory A (Demo)');
 
 -- ============================================================
 -- v3.1 patch: add order_person to production_orders
+-- Safe conditional: works on MySQL 5.7+
 -- ============================================================
-ALTER TABLE production_orders
-  ADD COLUMN IF NOT EXISTS order_person VARCHAR(64) DEFAULT NULL AFTER project_name;
+SET @col_exists = (
+  SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME   = 'production_orders'
+    AND COLUMN_NAME  = 'order_person'
+);
+SET @sql = IF(@col_exists = 0,
+  'ALTER TABLE production_orders ADD COLUMN order_person VARCHAR(64) DEFAULT NULL AFTER project_name',
+  'SELECT ''order_person already exists, skipped'' AS notice'
+);
+PREPARE _stmt FROM @sql;
+EXECUTE _stmt;
+DEALLOCATE PREPARE _stmt;
 
 -- ============================================================
 -- Admin user: สร้างแยกต่างหากด้วย node create_admin.js
