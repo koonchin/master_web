@@ -75,6 +75,15 @@ async function forwardToDjango(files) {
 }
 
 // ============================================================
+// AUTH
+// ============================================================
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/factories',         require('./routes/factories'));
+app.use('/api/production-orders', require('./routes/production-orders'));
+app.use('/api/shipments',         require('./routes/shipments'));
+app.get('/login', (req, res) => res.sendFile(path.join(__dirname, 'login.html')));
+
+// ============================================================
 // HEALTH CHECK
 // ============================================================
 app.get('/api/health', async (req, res) => {
