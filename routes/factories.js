@@ -69,7 +69,7 @@ router.post('/:id/users', requireAdmin, async (req, res) => {
     });
   } catch (err) {
     console.error('POST /api/factories/:id/users error:', err.message);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: err.message });
   }
 });
 
