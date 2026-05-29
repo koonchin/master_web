@@ -2301,7 +2301,7 @@ async function renderFactoryUsers(body, topbar) {
     <tr>
       <td><strong>${f.name}</strong></td>
       <td>${f.location || '-'}</td>
-      <td><button class="btn-primary btn-sm" onclick="openFactoryUserModal(${f.id}, '${f.name.replace(/'/g, "\\'")}')">👤 สร้าง User</button></td>
+      <td><button class="btn-primary btn-sm" onclick="openFactoryUserModal(${f.factory_id}, '${f.name.replace(/'/g, "\\'")}')">👤 สร้าง User</button></td>
     </tr>`).join('') :
     `<tr><td colspan="3"><div class="empty-state"><div class="empty-icon">🏭</div><p>ยังไม่มีข้อมูลโรงงาน</p></div></td></tr>`;
 
