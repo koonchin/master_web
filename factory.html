@@ -199,7 +199,9 @@
       </div>
       <div class="frow">
         <label>บริษัทขนส่ง</label>
-        <input type="text" id="m-logistics" placeholder="เช่น HLT, CTW, Kerry">
+        <select id="m-logistics">
+          <option value="">-- เลือกบริษัทขนส่ง --</option>
+        </select>
       </div>
       <div class="frow">
         <label>วันที่ส่งออกจากโรงงาน *</label>
@@ -421,8 +423,25 @@ async function loadHistory() {
   }
 }
 
+// ── LOGISTICS DROPDOWN ──
+let logisticsLoaded = false;
+async function loadLogistics() {
+  if (logisticsLoaded) return;
+  const sel = document.getElementById('m-logistics');
+  let companies = ['HLT', 'CTW']; // fallback
+  try {
+    const rates = await apiFetch('/logistics-rates');
+    const names = [...new Set((rates || []).map(r => r.company_name).filter(Boolean))];
+    if (names.length) companies = names;
+  } catch { /* keep fallback list */ }
+  sel.innerHTML = '<option value="">-- เลือกบริษัทขนส่ง --</option>' +
+    companies.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  logisticsLoaded = true;
+}
+
 // ── MODAL ──
 function openModal(encoded) {
+  loadLogistics();
   modalItems = JSON.parse(decodeURIComponent(encoded));
   ['m-ship-no','m-logistics'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('m-ship-date').value = new Date().toISOString().split('T')[0];
