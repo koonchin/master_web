@@ -2171,6 +2171,12 @@ async function renderProductionOrder(body, topbar) {
   try { factories = await API.get('/factories'); } catch { factories = []; }
   try { _itemMasterList = await API.get('/item-master'); } catch { _itemMasterList = []; }
 
+  // Distinct project names from existing orders → power the project dropdown (datalist)
+  let _prodOrders = [];
+  try { _prodOrders = await API.get('/production-orders'); } catch { _prodOrders = []; }
+  const projectNames = [...new Set((_prodOrders || []).map(o => o.project_name).filter(Boolean))];
+  const projectOpts = projectNames.map(n => `<option value="${String(n).replace(/"/g, '&quot;')}">`).join('');
+
   const factoryOpts = factories.map(f => `<option value="${f.id}">${f.name} — ${f.location || ''}</option>`).join('');
 
   body.innerHTML = `
@@ -2186,7 +2192,8 @@ async function renderProductionOrder(body, topbar) {
         </div>
         <div class="form-group">
           <label>โปรเจกต์ <span style="color:#ef4444">*</span></label>
-          <input class="form-control" id="prod-project" placeholder="ชื่อโปรเจกต์">
+          <input class="form-control" id="prod-project" list="prod-project-datalist" placeholder="เลือกหรือพิมพ์ชื่อโปรเจกต์" autocomplete="off">
+          <datalist id="prod-project-datalist">${projectOpts}</datalist>
         </div>
         <div class="form-group">
           <label>ความเร่งด่วน</label>
