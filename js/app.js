@@ -2171,13 +2171,13 @@ async function renderProductionOrder(body, topbar) {
   try { factories = await API.get('/factories'); } catch { factories = []; }
   try { _itemMasterList = await API.get('/item-master'); } catch { _itemMasterList = []; }
 
-  // Distinct project names from existing orders → power the project dropdown (datalist)
-  let _prodOrders = [];
-  try { _prodOrders = await API.get('/production-orders'); } catch { _prodOrders = []; }
-  const projectNames = [...new Set((_prodOrders || []).map(o => o.project_name).filter(Boolean))];
+  // Distinct project names from existing POs (same source as the PO form) → project dropdown
+  let _projSource = [];
+  try { _projSource = _allPOHeaders && _allPOHeaders.length ? _allPOHeaders : await API.get('/po'); } catch { _projSource = []; }
+  const projectNames = [...new Set((_projSource || []).map(o => o.project_name).filter(Boolean))].sort();
   const projectOpts = projectNames.map(n => `<option value="${String(n).replace(/"/g, '&quot;')}">`).join('');
 
-  const factoryOpts = factories.map(f => `<option value="${f.id}">${f.name} — ${f.location || ''}</option>`).join('');
+  const factoryOpts = factories.map(f => `<option value="${f.factory_id}">${f.name}${f.location ? ' — ' + f.location : ''}</option>`).join('');
 
   body.innerHTML = `
     <div class="card">
