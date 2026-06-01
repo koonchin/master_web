@@ -160,7 +160,7 @@ router.post('/', requireFactory, async (req, res) => {
       factory_id,
       shipment_number,
       logistics_provider || null,
-      tracking_number || null,
+      tracking_number || shipment_number,
       ship_out_date,
       est_arrival_date,
     ]);

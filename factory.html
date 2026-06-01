@@ -202,10 +202,6 @@
         <input type="text" id="m-logistics" placeholder="เช่น HLT, CTW, Kerry">
       </div>
       <div class="frow">
-        <label>เลขพัสดุ / Tracking No.</label>
-        <input type="text" id="m-tracking" placeholder="เช่น TH123456789CN">
-      </div>
-      <div class="frow">
         <label>วันที่ส่งออกจากโรงงาน *</label>
         <input type="date" id="m-ship-date">
       </div>
@@ -428,7 +424,7 @@ async function loadHistory() {
 // ── MODAL ──
 function openModal(encoded) {
   modalItems = JSON.parse(decodeURIComponent(encoded));
-  ['m-ship-no','m-logistics','m-tracking'].forEach(id => document.getElementById(id).value = '');
+  ['m-ship-no','m-logistics'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('m-ship-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('m-eta').value = '';
   document.getElementById('modal-err').textContent = '';
@@ -453,7 +449,6 @@ async function submitShipment() {
   const errEl = document.getElementById('modal-err');
   const shipment_number    = document.getElementById('m-ship-no').value.trim();
   const logistics_provider = document.getElementById('m-logistics').value.trim() || null;
-  const tracking_number    = document.getElementById('m-tracking').value.trim()  || null;
   const ship_out_date      = document.getElementById('m-ship-date').value;
   const est_arrival_date   = document.getElementById('m-eta').value;
   errEl.textContent = '';
@@ -477,7 +472,7 @@ async function submitShipment() {
   try {
     const result = await apiFetch('/shipments', {
       method: 'POST',
-      body: JSON.stringify({ shipment_number, logistics_provider, tracking_number, ship_out_date, est_arrival_date, items }),
+      body: JSON.stringify({ shipment_number, logistics_provider, ship_out_date, est_arrival_date, items }),
     });
     closeModal();
     const banner = document.getElementById('success-banner');
