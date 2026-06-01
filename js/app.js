@@ -2185,6 +2185,10 @@ async function renderProductionOrder(body, topbar) {
           </select>
         </div>
         <div class="form-group">
+          <label>โปรเจกต์ <span style="color:#ef4444">*</span></label>
+          <input class="form-control" id="prod-project" placeholder="ชื่อโปรเจกต์">
+        </div>
+        <div class="form-group">
           <label>ความเร่งด่วน</label>
           <select class="form-control" id="prod-priority">
             <option value="Urgent">🔴 Urgent</option>
@@ -2230,6 +2234,19 @@ async function renderProductionOrder(body, topbar) {
     </div>`;
 
   _prodItemCount = 1;
+
+  // Enter inside an item row → add a new row (if on the last row) and jump to it
+  document.getElementById('prod-items-body').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const tr = e.target.closest('tr');
+    if (!tr) return;
+    const before = [...document.querySelectorAll('#prod-items-body tr')];
+    if (tr === before[before.length - 1]) addProdItem();
+    const after = [...document.querySelectorAll('#prod-items-body tr')];
+    const next = after[after.indexOf(tr) + 1];
+    if (next) next.querySelector('input')?.focus();
+  });
 }
 
 function addProdItem() {
@@ -2253,12 +2270,14 @@ function reindexProdItems() {
 
 async function submitProductionOrder() {
   const factoryId = document.getElementById('prod-factory').value;
+  const project = document.getElementById('prod-project').value.trim();
   const priority = document.getElementById('prod-priority').value;
   const orderPerson = document.getElementById('prod-order-person').value.trim();
   const dueDate = document.getElementById('prod-due-date').value;
   const notes = document.getElementById('prod-notes').value.trim();
 
   if (!factoryId) { toast('กรุณาเลือกโรงงาน', 'error'); return; }
+  if (!project) { toast('กรุณากรอกชื่อโปรเจกต์', 'error'); return; }
   if (!orderPerson) { toast('กรุณากรอกชื่อคนสั่ง', 'error'); return; }
   if (!dueDate) { toast('กรุณาระบุกำหนดส่ง', 'error'); return; }
 
@@ -2268,17 +2287,17 @@ async function submitProductionOrder() {
     const inputs = row.querySelectorAll('input');
     const sku = inputs[0]?.value.trim();
     const qty = parseInt(inputs[1]?.value || '0');
-    if (sku && qty > 0) items.push({ sku, quantity: qty });
+    if (sku && qty > 0) items.push({ factory_id: +factoryId, sku, order_qty: qty, remark: notes });
   }
   if (items.length === 0) { toast('กรุณาเพิ่มอย่างน้อย 1 SKU', 'error'); return; }
 
   try {
     await API.post('/production-orders', {
-      factory_id: +factoryId,
+      project_name: project,
       priority,
       order_person: orderPerson,
+      order_date: today(),
       due_date: dueDate,
-      notes,
       items
     });
     toast('สร้างใบสั่งผลิตสำเร็จ', 'success');
