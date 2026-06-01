@@ -49,10 +49,9 @@ router.get('/', requireAdmin, async (req, res) => {
 
 // POST /api/production-orders — create a new order with items
 router.post('/', requireAdmin, async (req, res) => {
-  const { order_number, project_name, order_person, priority, order_date, items = [] } = req.body;
+  const { order_number, project_name, order_person, priority, order_date, due_date: bodyDueDate, items = [] } = req.body;
 
-  // Validate required fields
-  if (!order_number) return res.status(400).json({ error: 'order_number is required' });
+  // Validate required fields (order_number is auto-generated below if omitted)
   if (!project_name) return res.status(400).json({ error: 'project_name is required' });
   if (!items || items.length === 0) return res.status(400).json({ error: 'items are required' });
 
@@ -74,9 +73,21 @@ router.post('/', requireAdmin, async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    // Calculate due_date from priority_sla table
-    let due_date = null;
-    if (priority && order_date) {
+    // Auto-generate order_number when the client doesn't supply one: PROD-YYYYMMDD-NNN
+    let finalOrderNumber = order_number;
+    if (!finalOrderNumber) {
+      const baseDate = order_date ? new Date(order_date + 'T00:00:00') : new Date();
+      const ymd = baseDate.toISOString().slice(0, 10).replace(/-/g, '');
+      const [[{ n }]] = await conn.query(
+        'SELECT COUNT(*) AS n FROM production_orders WHERE order_number LIKE ?',
+        [`PROD-${ymd}-%`]
+      );
+      finalOrderNumber = `PROD-${ymd}-${String(n + 1).padStart(3, '0')}`;
+    }
+
+    // due_date: honor the value chosen on the form; otherwise derive from priority SLA
+    let due_date = bodyDueDate || null;
+    if (!due_date && priority && order_date) {
       const [[sla]] = await conn.query(
         'SELECT ship_within_max_days FROM priority_sla WHERE priority = ?',
         [priority]
@@ -92,7 +103,7 @@ router.post('/', requireAdmin, async (req, res) => {
     const [headerResult] = await conn.query(
       `INSERT INTO production_orders (order_number, project_name, order_person, priority, order_date, due_date, status)
        VALUES (?, ?, ?, ?, ?, ?, 'Pending')`,
-      [order_number, project_name, order_person || null, priority || null, order_date || null, due_date]
+      [finalOrderNumber, project_name, order_person || null, priority || null, order_date || null, due_date]
     );
     const order_id = headerResult.insertId;
 
