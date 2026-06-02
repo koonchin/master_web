@@ -1,6 +1,7 @@
 const express = require('express');
 const pool    = require('../db');
 const { requireAdmin } = require('../middleware/auth');
+const { ensureMirrorHeader } = require('../po-mirror');
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ router.get('/', requireAdmin, async (req, res) => {
   try {
     const [orderRows] = await pool.query(`
       SELECT po.order_id, po.order_number, po.project_name, po.order_person,
-             po.priority, po.order_date, po.due_date, po.status, po.created_at
+             po.priority, po.order_date, po.due_date, po.est_ready_date, po.status, po.created_at
       FROM production_orders po
       ORDER BY po.created_at DESC
     `);
@@ -49,7 +50,7 @@ router.get('/', requireAdmin, async (req, res) => {
 
 // POST /api/production-orders — create a new order with items
 router.post('/', requireAdmin, async (req, res) => {
-  const { order_number, project_name, order_person, priority, order_date, due_date: bodyDueDate, items = [] } = req.body;
+  const { order_number, project_name, order_person, priority, order_date, due_date: bodyDueDate, est_ready_date, items = [] } = req.body;
 
   // Validate required fields (order_number is auto-generated below if omitted)
   if (!project_name) return res.status(400).json({ error: 'project_name is required' });
@@ -101,9 +102,9 @@ router.post('/', requireAdmin, async (req, res) => {
 
     // Insert order header
     const [headerResult] = await conn.query(
-      `INSERT INTO production_orders (order_number, project_name, order_person, priority, order_date, due_date, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'Pending')`,
-      [finalOrderNumber, project_name, order_person || null, priority || null, order_date || null, due_date]
+      `INSERT INTO production_orders (order_number, project_name, order_person, priority, order_date, due_date, est_ready_date, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending')`,
+      [finalOrderNumber, project_name, order_person || null, priority || null, order_date || null, due_date, est_ready_date || null]
     );
     const order_id = headerResult.insertId;
 
@@ -116,11 +117,15 @@ router.post('/', requireAdmin, async (req, res) => {
       );
     }
 
+    // Mirror into World A (po_headers/po_items) so the Dashboard + Stock report
+    // see this production order as an "Ordered" PO. Same transaction.
+    await ensureMirrorHeader(conn, order_id);
+
     await conn.commit();
 
     // Fetch the created order with items
     const [[order]] = await pool.query(
-      `SELECT order_id, order_number, project_name, order_person, priority, order_date, due_date, status, created_at
+      `SELECT order_id, order_number, project_name, order_person, priority, order_date, due_date, est_ready_date, status, created_at
        FROM production_orders WHERE order_id = ?`,
       [order_id]
     );
@@ -161,7 +166,7 @@ router.patch('/:id/status', requireAdmin, async (req, res) => {
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Order not found' });
 
     const [[order]] = await pool.query(
-      'SELECT order_id, order_number, project_name, order_person, priority, order_date, due_date, status, created_at FROM production_orders WHERE order_id = ?',
+      'SELECT order_id, order_number, project_name, order_person, priority, order_date, due_date, est_ready_date, status, created_at FROM production_orders WHERE order_id = ?',
       [order_id]
     );
     res.json(order);

@@ -199,11 +199,9 @@
       </div>
       <div class="frow">
         <label>บริษัทขนส่ง</label>
-        <input type="text" id="m-logistics" placeholder="เช่น HLT, CTW, Kerry">
-      </div>
-      <div class="frow">
-        <label>เลขพัสดุ / Tracking No.</label>
-        <input type="text" id="m-tracking" placeholder="เช่น TH123456789CN">
+        <select id="m-logistics">
+          <option value="">-- เลือกบริษัทขนส่ง --</option>
+        </select>
       </div>
       <div class="frow">
         <label>วันที่ส่งออกจากโรงงาน *</label>
@@ -257,6 +255,8 @@ async function doLogin() {
     if (data.role !== 'factory'){ errEl.textContent = 'บัญชีนี้ไม่มีสิทธิ์เข้า Factory Portal'; return; }
 
     token = data.token;
+    localStorage.setItem('factory_token', token);
+    localStorage.setItem('factory_user', username);
     document.getElementById('hdr-user').textContent = username;
     document.getElementById('login-screen').style.display = 'none';
     document.getElementById('app').style.display = 'block';
@@ -270,11 +270,24 @@ async function doLogin() {
 
 function logout() {
   token = null;
+  localStorage.removeItem('factory_token');
+  localStorage.removeItem('factory_user');
   document.getElementById('app').style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('inp-pass').value = '';
   document.getElementById('login-err').textContent = '';
 }
+
+function restoreSession() {
+  const saved = localStorage.getItem('factory_token');
+  if (!saved) return;
+  token = saved;
+  document.getElementById('hdr-user').textContent = localStorage.getItem('factory_user') || '';
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  loadPending();
+}
+restoreSession();
 
 // ── API HELPER ──
 async function apiFetch(path, opts = {}) {
@@ -282,6 +295,7 @@ async function apiFetch(path, opts = {}) {
     ...opts,
     headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', ...(opts.headers || {}) },
   });
+  if (res.status === 401) { logout(); throw new Error('กรุณาเข้าสู่ระบบใหม่'); }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
@@ -332,8 +346,10 @@ async function loadPending() {
     for (const it of items) {
       if (!orderMap.has(it.order_id)) {
         orderMap.set(it.order_id, {
+          order_id: it.order_id,
           order_number: it.order_number, project_name: it.project_name,
-          priority: it.priority, due_date: it.due_date, items: [],
+          priority: it.priority, due_date: it.due_date,
+          est_ready_date: it.est_ready_date, items: [],
         });
       }
       orderMap.get(it.order_id).items.push(it);
@@ -362,6 +378,13 @@ async function loadPending() {
               <span class="prio ${prioCls(order.priority)}">${esc(order.priority)}</span>
               &nbsp;Due: <span class="${dueCls(order.due_date)}">${fmtDate(order.due_date)}</span>
             </div>
+            <div class="card-sub" style="margin-top:6px">
+              วันคาดว่าผลิตเสร็จ:
+              <input type="date" id="ready-${order.order_id}" value="${order.est_ready_date || ''}"
+                     style="font-size:13px;padding:2px 4px">
+              <button class="btn btn-sm" onclick="saveReadyDate(${order.order_id})">บันทึก</button>
+              <span id="ready-msg-${order.order_id}" style="font-size:12px;color:#16a34a"></span>
+            </div>
           </div>
           <button class="btn btn-ship" onclick="openModal('${encoded}')">📦 จัดส่งแล้ว</button>
         </div>
@@ -374,6 +397,52 @@ async function loadPending() {
     }
   } catch (err) {
     loaderEl.textContent = 'โหลดข้อมูลไม่สำเร็จ: ' + err.message;
+  }
+}
+
+// ── EST READY DATE ──
+async function saveReadyDate(orderId) {
+  const val = document.getElementById('ready-' + orderId).value || null;
+  const msg = document.getElementById('ready-msg-' + orderId);
+  msg.style.color = '#16a34a'; msg.textContent = 'กำลังบันทึก...';
+  try {
+    await apiFetch('/shipments/orders/' + orderId + '/ready-date', {
+      method: 'PATCH',
+      body: JSON.stringify({ est_ready_date: val }),
+    });
+    msg.textContent = '✓ บันทึกแล้ว';
+    setTimeout(() => { msg.textContent = ''; }, 3000);
+  } catch (err) {
+    msg.style.color = '#dc2626';
+    msg.textContent = err.message || 'บันทึกไม่สำเร็จ';
+  }
+}
+
+// ── EDIT SHIPPED QTY (Issue 5) ──
+async function editShipmentQty(shipmentId, encodedItems) {
+  const current = JSON.parse(decodeURIComponent(encodedItems));
+  const updates = [];
+  for (const it of current) {
+    const input = prompt(`จำนวนใหม่สำหรับ ${it.sku} (เดิม ${it.ship_qty})`, it.ship_qty);
+    if (input === null) continue;                 // cancelled this item
+    const qty = parseInt(input, 10);
+    if (!Number.isInteger(qty) || qty <= 0) { alert('จำนวนต้องมากกว่า 0: ' + it.sku); return; }
+    if (qty !== it.ship_qty) updates.push({ shipment_item_id: it.shipment_item_id, ship_qty: qty });
+  }
+  if (!updates.length) return;
+  try {
+    const res = await apiFetch('/shipments/' + shipmentId + '/items', {
+      method: 'PATCH',
+      body: JSON.stringify({ items: updates }),
+    });
+    let msg = '✓ แก้ไขจำนวนเรียบร้อย';
+    if (res.warnings && res.warnings.length) {
+      msg += ' ⚠️ ' + res.warnings.map(w => `${w.sku}: ${w.message}`).join(', ');
+    }
+    alert(msg);
+    loadHistory();
+  } catch (err) {
+    alert(err.message || 'แก้ไขไม่สำเร็จ');
   }
 }
 
@@ -400,7 +469,12 @@ async function loadHistory() {
         <td>${fmtDate(s.ship_out_date)}</td>
         <td>${fmtDate(s.est_arrival_date)}</td>
         <td><span class="status-chip ${CLS[s.status] || ''}">${TH[s.status] || esc(s.status)}</span></td>
-        <td>${(s.items || []).map(i => `<span class="sku-chip">${esc(i.sku)} ×${i.ship_qty}</span>`).join('')}</td>
+        <td>
+          ${(s.items || []).map(i => `<span class="sku-chip">${esc(i.sku)} ×${i.ship_qty}</span>`).join('')}
+          ${s.status !== 'Cancelled' && (s.items || []).length
+            ? `<button class="btn btn-sm" onclick="editShipmentQty(${s.shipment_id}, '${encodeURIComponent(JSON.stringify(s.items))}')">✏️ แก้จำนวน</button>`
+            : ''}
+        </td>
       </tr>
     `).join('');
     cardEl.style.display = '';
@@ -409,10 +483,27 @@ async function loadHistory() {
   }
 }
 
+// ── LOGISTICS DROPDOWN ──
+let logisticsLoaded = false;
+async function loadLogistics() {
+  if (logisticsLoaded) return;
+  const sel = document.getElementById('m-logistics');
+  let companies = ['HLT', 'CTW']; // fallback
+  try {
+    const rates = await apiFetch('/logistics-rates');
+    const names = [...new Set((rates || []).map(r => r.company_name).filter(Boolean))];
+    if (names.length) companies = names;
+  } catch { /* keep fallback list */ }
+  sel.innerHTML = '<option value="">-- เลือกบริษัทขนส่ง --</option>' +
+    companies.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  logisticsLoaded = true;
+}
+
 // ── MODAL ──
 function openModal(encoded) {
+  loadLogistics();
   modalItems = JSON.parse(decodeURIComponent(encoded));
-  ['m-ship-no','m-logistics','m-tracking'].forEach(id => document.getElementById(id).value = '');
+  ['m-ship-no','m-logistics'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('m-ship-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('m-eta').value = '';
   document.getElementById('modal-err').textContent = '';
@@ -424,7 +515,7 @@ function openModal(encoded) {
         <div class="item-sku">${esc(it.sku)}</div>
         <div class="item-remain">ค้างส่ง ${it.remaining_qty} ชิ้น</div>
       </div>
-      <input class="qty-inp" type="number" id="qty-${i}" min="1" max="${it.remaining_qty}" value="${it.remaining_qty}">
+      <input class="qty-inp" type="number" id="qty-${i}" min="1" value="${it.remaining_qty}" title="ส่งเกินจำนวนค้างได้ (จะมีการแจ้งเตือน)">
     </div>
   `).join('');
 
@@ -437,7 +528,6 @@ async function submitShipment() {
   const errEl = document.getElementById('modal-err');
   const shipment_number    = document.getElementById('m-ship-no').value.trim();
   const logistics_provider = document.getElementById('m-logistics').value.trim() || null;
-  const tracking_number    = document.getElementById('m-tracking').value.trim()  || null;
   const ship_out_date      = document.getElementById('m-ship-date').value;
   const est_arrival_date   = document.getElementById('m-eta').value;
   errEl.textContent = '';
@@ -461,13 +551,17 @@ async function submitShipment() {
   try {
     const result = await apiFetch('/shipments', {
       method: 'POST',
-      body: JSON.stringify({ shipment_number, logistics_provider, tracking_number, ship_out_date, est_arrival_date, items }),
+      body: JSON.stringify({ shipment_number, logistics_provider, ship_out_date, est_arrival_date, items }),
     });
     closeModal();
     const banner = document.getElementById('success-banner');
-    banner.textContent = `✅ บันทึกการจัดส่ง ${result.shipment_number} เรียบร้อย (${items.length} รายการ)`;
+    let msg = `✅ บันทึกการจัดส่ง ${result.shipment_number} เรียบร้อย (${items.length} รายการ)`;
+    if (result.warnings && result.warnings.length) {
+      msg += ' ⚠️ ' + result.warnings.map(w => `${w.sku}: ${w.message}`).join(', ');
+    }
+    banner.textContent = msg;
     banner.style.display = '';
-    setTimeout(() => { banner.style.display = 'none'; }, 6000);
+    setTimeout(() => { banner.style.display = 'none'; }, 9000);
     loadPending();
   } catch (err) {
     errEl.textContent = err.message || 'บันทึกไม่สำเร็จ';
