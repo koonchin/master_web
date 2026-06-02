@@ -1,7 +1,7 @@
 const express = require('express');
 const pool    = require('../db');
 const { requireFactory } = require('../middleware/auth');
-const { syncMirrorForShipment, syncMirror } = require('../po-mirror');
+const { syncMirrorForShipment, syncRemainderPo } = require('../po-mirror');
 
 const router = express.Router();
 
@@ -387,8 +387,8 @@ router.patch('/orders/:orderId/ready-date', requireFactory, async (req, res) => 
         await conn.rollback();
         return res.status(404).json({ error: 'Order not found' });
       }
-      // Reflect the baseline into the mirrored po_headers.
-      await syncMirror(conn, order_id);
+      // Reflect the baseline into the remainder PO (its pre-ship ETA baseline).
+      await syncRemainderPo(conn, order_id);
       await conn.commit();
     } catch (err) {
       await conn.rollback();

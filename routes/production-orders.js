@@ -1,7 +1,7 @@
 const express = require('express');
 const pool    = require('../db');
 const { requireAdmin } = require('../middleware/auth');
-const { ensureMirrorHeader } = require('../po-mirror');
+const { syncOrderMirror } = require('../po-mirror');
 
 const router = express.Router();
 
@@ -118,8 +118,9 @@ router.post('/', requireAdmin, async (req, res) => {
     }
 
     // Mirror into World A (po_headers/po_items) so the Dashboard + Stock report
-    // see this production order as an "Ordered" PO. Same transaction.
-    await ensureMirrorHeader(conn, order_id);
+    // see this production order as an "Ordered" PO. Same transaction. No
+    // shipments yet, so this just creates the remainder (full-qty Ordered) PO.
+    await syncOrderMirror(conn, order_id);
 
     await conn.commit();
 
