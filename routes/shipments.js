@@ -1,6 +1,7 @@
 const express = require('express');
 const pool    = require('../db');
 const { requireFactory } = require('../middleware/auth');
+const { syncMirrorForShipment } = require('../po-mirror');
 
 const router = express.Router();
 
@@ -178,6 +179,9 @@ router.post('/', requireFactory, async (req, res) => {
       `, [shipment_id, item.order_item_id, poi.sku, item.ship_qty]);
     }
 
+    // Mirror shipment state into World A po_headers (Shipped_CN + departure_date).
+    await syncMirrorForShipment(conn, shipment_id);
+
     await conn.commit();
 
     // Return created shipment with items
@@ -224,10 +228,22 @@ router.patch('/:id/status', requireFactory, async (req, res) => {
     );
     if (!existing) return res.status(404).json({ error: 'Shipment not found' });
 
-    await pool.query(
-      'UPDATE factory_shipments SET status = ? WHERE shipment_id = ?',
-      [status, shipment_id]
-    );
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query(
+        'UPDATE factory_shipments SET status = ? WHERE shipment_id = ?',
+        [status, shipment_id]
+      );
+      // Re-sync the mirrored po_headers status from the order's live shipments.
+      await syncMirrorForShipment(conn, shipment_id);
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
 
     const [[shipment]] = await pool.query(`
       SELECT shipment_id, factory_id, shipment_number, logistics_provider,
