@@ -25,7 +25,7 @@ const STATUS_RANK = {
 // production order does not exist.
 async function ensureMirrorHeader(conn, order_id) {
   const [[order]] = await conn.query(
-    `SELECT order_number, project_name, order_date
+    `SELECT order_number, project_name, order_date, est_ready_date
      FROM production_orders WHERE order_id = ?`,
     [order_id]
   );
@@ -39,10 +39,13 @@ async function ensureMirrorHeader(conn, order_id) {
   );
   if (existing) return po_number;
 
+  // Pre-shipment, use est_ready_date as the departure baseline so the Stock
+  // report can show an approximate ETA (departure_date + est_lead_time) before
+  // a real shipment exists. syncMirror overwrites it once goods ship.
   await conn.query(
-    `INSERT INTO po_headers (po_number, project_name, order_date, status, est_lead_time)
-     VALUES (?, ?, ?, 'Ordered', 25)`,
-    [po_number, order.project_name, order.order_date || null]
+    `INSERT INTO po_headers (po_number, project_name, order_date, status, est_lead_time, departure_date)
+     VALUES (?, ?, ?, 'Ordered', 25, ?)`,
+    [po_number, order.project_name, order.order_date || null, order.est_ready_date || null]
   );
 
   const [items] = await conn.query(
@@ -85,6 +88,16 @@ async function syncMirror(conn, order_id) {
     if (s.ship_out_date && (!departure_date || s.ship_out_date < departure_date)) {
       departure_date = s.ship_out_date;
     }
+  }
+
+  // No real shipment yet -> fall back to the factory's est_ready_date as the
+  // pre-ship ETA baseline (Stock report ETA = departure_date + est_lead_time).
+  if (!departure_date) {
+    const [[order]] = await conn.query(
+      'SELECT est_ready_date FROM production_orders WHERE order_id = ?',
+      [order_id]
+    );
+    departure_date = (order && order.est_ready_date) || null;
   }
 
   await conn.query(

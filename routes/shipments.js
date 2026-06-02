@@ -1,7 +1,7 @@
 const express = require('express');
 const pool    = require('../db');
 const { requireFactory } = require('../middleware/auth');
-const { syncMirrorForShipment } = require('../po-mirror');
+const { syncMirrorForShipment, syncMirror } = require('../po-mirror');
 
 const router = express.Router();
 
@@ -16,7 +16,7 @@ router.get('/my-orders', requireFactory, async (req, res) => {
     const [rows] = await pool.query(`
       SELECT
         poi.item_id, poi.order_id, poi.sku, poi.order_qty, poi.remark,
-        po.order_number, po.project_name, po.priority, po.due_date, po.status AS order_status,
+        po.order_number, po.project_name, po.priority, po.due_date, po.est_ready_date, po.status AS order_status,
         COALESCE(SUM(fsi.ship_qty), 0) AS already_shipped,
         (poi.order_qty - COALESCE(SUM(fsi.ship_qty), 0)) AS remaining_qty
       FROM production_order_items poi
@@ -254,6 +254,59 @@ router.patch('/:id/status', requireFactory, async (req, res) => {
     res.json(shipment);
   } catch (err) {
     console.error('PATCH /api/shipments/:id/status error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PATCH /api/shipments/orders/:orderId/ready-date
+// Factory sets/updates the estimated production-finish date for an order it
+// has items in. Propagates to the mirrored po_headers as a pre-ship ETA baseline.
+router.patch('/orders/:orderId/ready-date', requireFactory, async (req, res) => {
+  const order_id = parseInt(req.params.orderId, 10);
+  const factory_id = req.user.factory_id;
+  const { est_ready_date } = req.body;
+
+  if (!Number.isInteger(order_id)) return res.status(400).json({ error: 'invalid orderId' });
+  if (est_ready_date && !/^\d{4}-\d{2}-\d{2}$/.test(est_ready_date)) {
+    return res.status(400).json({ error: 'est_ready_date must be YYYY-MM-DD or null' });
+  }
+
+  try {
+    // Verify this factory has at least one item in the order
+    const [[owned]] = await pool.query(
+      'SELECT 1 AS ok FROM production_order_items WHERE order_id = ? AND factory_id = ? LIMIT 1',
+      [order_id, factory_id]
+    );
+    if (!owned) return res.status(403).json({ error: 'access denied for this order' });
+
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [result] = await conn.query(
+        'UPDATE production_orders SET est_ready_date = ? WHERE order_id = ?',
+        [est_ready_date || null, order_id]
+      );
+      if (result.affectedRows === 0) {
+        await conn.rollback();
+        return res.status(404).json({ error: 'Order not found' });
+      }
+      // Reflect the baseline into the mirrored po_headers.
+      await syncMirror(conn, order_id);
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+
+    const [[order]] = await pool.query(
+      'SELECT order_id, order_number, est_ready_date FROM production_orders WHERE order_id = ?',
+      [order_id]
+    );
+    res.json(order);
+  } catch (err) {
+    console.error('PATCH /api/shipments/orders/:orderId/ready-date error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

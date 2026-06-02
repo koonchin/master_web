@@ -2212,6 +2212,10 @@ async function renderProductionOrder(body, topbar) {
           <label>กำหนดส่ง <span style="color:#ef4444">*</span></label>
           <input class="form-control" type="date" id="prod-due-date" value="${today()}">
         </div>
+        <div class="form-group">
+          <label>วันคาดว่าผลิตเสร็จ (โรงงานแก้ได้ภายหลัง)</label>
+          <input class="form-control" type="date" id="prod-ready-date">
+        </div>
         <div class="form-group" style="grid-column:1/-1">
           <label>หมายเหตุ</label>
           <textarea class="form-control" id="prod-notes" placeholder="หมายเหตุเพิ่มเติม (ถ้ามี)" rows="2"></textarea>
@@ -2281,6 +2285,7 @@ async function submitProductionOrder() {
   const priority = document.getElementById('prod-priority').value;
   const orderPerson = document.getElementById('prod-order-person').value.trim();
   const dueDate = document.getElementById('prod-due-date').value;
+  const readyDate = document.getElementById('prod-ready-date').value;
   const notes = document.getElementById('prod-notes').value.trim();
 
   if (!factoryId) { toast('กรุณาเลือกโรงงาน', 'error'); return; }
@@ -2305,6 +2310,7 @@ async function submitProductionOrder() {
       order_person: orderPerson,
       order_date: today(),
       due_date: dueDate,
+      est_ready_date: readyDate || null,
       items
     });
     toast('สร้างใบสั่งผลิตสำเร็จ', 'success');
