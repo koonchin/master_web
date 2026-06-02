@@ -94,6 +94,7 @@ router.post('/', requireFactory, async (req, res) => {
   } = req.body;
 
   const factory_id = req.user.factory_id;
+  const warnings = [];
 
   // --- Validation (all before getConnection) ---
   if (!shipment_number)   return res.status(400).json({ error: 'shipment_number is required' });
@@ -134,10 +135,16 @@ router.post('/', requireFactory, async (req, res) => {
         WHERE fsi.order_item_id = ?
       `, [item.order_item_id]);
 
+      // Issue 5: over-shipping is allowed but flagged as a warning (the factory
+      // can correct it later via PATCH /:id/items).
       const remaining = poi.order_qty - shipped.already_shipped;
       if (item.ship_qty > remaining) {
-        return res.status(400).json({
-          error: `item order_item_id=${item.order_item_id}: ship_qty ${item.ship_qty} exceeds remaining ${remaining}`,
+        warnings.push({
+          order_item_id: item.order_item_id,
+          sku: poi.sku,
+          ship_qty: item.ship_qty,
+          remaining,
+          message: `over-shipped by ${item.ship_qty - remaining}`,
         });
       }
     }
@@ -196,7 +203,7 @@ router.post('/', requireFactory, async (req, res) => {
       FROM factory_shipment_items WHERE shipment_id = ?
     `, [shipment_id]);
 
-    res.status(201).json({ ...shipment, items: createdItems });
+    res.status(201).json({ ...shipment, items: createdItems, warnings });
   } catch (err) {
     await conn.rollback();
     console.error('POST /api/shipments error:', err.message);
@@ -254,6 +261,96 @@ router.patch('/:id/status', requireFactory, async (req, res) => {
     res.json(shipment);
   } catch (err) {
     console.error('PATCH /api/shipments/:id/status error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PATCH /api/shipments/:id/items
+// Factory owner edits ship_qty of items on an existing shipment. Over-shipping
+// is allowed (returns warnings[]). Re-syncs the mirrored po_headers.
+router.patch('/:id/items', requireFactory, async (req, res) => {
+  const shipment_id = parseInt(req.params.id, 10);
+  const factory_id = req.user.factory_id;
+  const { items = [] } = req.body;
+
+  if (!Number.isInteger(shipment_id)) return res.status(400).json({ error: 'invalid shipment id' });
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'items are required' });
+  }
+  for (let i = 0; i < items.length; i++) {
+    if (!items[i].shipment_item_id) return res.status(400).json({ error: `items[${i}].shipment_item_id is required` });
+    if (!items[i].ship_qty || items[i].ship_qty <= 0)
+      return res.status(400).json({ error: `items[${i}].ship_qty must be > 0` });
+  }
+
+  try {
+    // Verify shipment belongs to this factory
+    const [[ship]] = await pool.query(
+      'SELECT shipment_id FROM factory_shipments WHERE shipment_id = ? AND factory_id = ?',
+      [shipment_id, factory_id]
+    );
+    if (!ship) return res.status(404).json({ error: 'Shipment not found' });
+
+    const warnings = [];
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      for (const it of items) {
+        // Ensure the shipment item belongs to this shipment
+        const [[row]] = await conn.query(
+          'SELECT id, order_item_id, sku FROM factory_shipment_items WHERE id = ? AND shipment_id = ?',
+          [it.shipment_item_id, shipment_id]
+        );
+        if (!row) {
+          await conn.rollback();
+          return res.status(404).json({ error: `shipment_item_id=${it.shipment_item_id} not found in this shipment` });
+        }
+        await conn.query(
+          'UPDATE factory_shipment_items SET ship_qty = ? WHERE id = ?',
+          [it.ship_qty, it.shipment_item_id]
+        );
+
+        // Recompute over-ship after this edit (exclude cancelled shipments)
+        const [[poi]] = await conn.query(
+          'SELECT order_qty FROM production_order_items WHERE item_id = ?',
+          [row.order_item_id]
+        );
+        const [[sh]] = await conn.query(
+          `SELECT COALESCE(SUM(fsi.ship_qty),0) AS total
+           FROM factory_shipment_items fsi
+           JOIN factory_shipments fs ON fs.shipment_id = fsi.shipment_id AND fs.status <> 'Cancelled'
+           WHERE fsi.order_item_id = ?`,
+          [row.order_item_id]
+        );
+        if (poi && sh.total > poi.order_qty) {
+          warnings.push({
+            order_item_id: row.order_item_id,
+            sku: row.sku,
+            total_shipped: sh.total,
+            order_qty: poi.order_qty,
+            message: `over-shipped by ${sh.total - poi.order_qty}`,
+          });
+        }
+      }
+
+      // Re-sync the mirrored po_headers from the order's live shipments.
+      await syncMirrorForShipment(conn, shipment_id);
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+
+    const [updated] = await pool.query(
+      `SELECT id AS shipment_item_id, shipment_id, order_item_id, sku, ship_qty
+       FROM factory_shipment_items WHERE shipment_id = ?`,
+      [shipment_id]
+    );
+    res.json({ shipment_id, items: updated, warnings });
+  } catch (err) {
+    console.error('PATCH /api/shipments/:id/items error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

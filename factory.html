@@ -418,6 +418,34 @@ async function saveReadyDate(orderId) {
   }
 }
 
+// ── EDIT SHIPPED QTY (Issue 5) ──
+async function editShipmentQty(shipmentId, encodedItems) {
+  const current = JSON.parse(decodeURIComponent(encodedItems));
+  const updates = [];
+  for (const it of current) {
+    const input = prompt(`จำนวนใหม่สำหรับ ${it.sku} (เดิม ${it.ship_qty})`, it.ship_qty);
+    if (input === null) continue;                 // cancelled this item
+    const qty = parseInt(input, 10);
+    if (!Number.isInteger(qty) || qty <= 0) { alert('จำนวนต้องมากกว่า 0: ' + it.sku); return; }
+    if (qty !== it.ship_qty) updates.push({ shipment_item_id: it.shipment_item_id, ship_qty: qty });
+  }
+  if (!updates.length) return;
+  try {
+    const res = await apiFetch('/shipments/' + shipmentId + '/items', {
+      method: 'PATCH',
+      body: JSON.stringify({ items: updates }),
+    });
+    let msg = '✓ แก้ไขจำนวนเรียบร้อย';
+    if (res.warnings && res.warnings.length) {
+      msg += ' ⚠️ ' + res.warnings.map(w => `${w.sku}: ${w.message}`).join(', ');
+    }
+    alert(msg);
+    loadHistory();
+  } catch (err) {
+    alert(err.message || 'แก้ไขไม่สำเร็จ');
+  }
+}
+
 // ── HISTORY ──
 async function loadHistory() {
   const loaderEl = document.getElementById('history-loader');
@@ -441,7 +469,12 @@ async function loadHistory() {
         <td>${fmtDate(s.ship_out_date)}</td>
         <td>${fmtDate(s.est_arrival_date)}</td>
         <td><span class="status-chip ${CLS[s.status] || ''}">${TH[s.status] || esc(s.status)}</span></td>
-        <td>${(s.items || []).map(i => `<span class="sku-chip">${esc(i.sku)} ×${i.ship_qty}</span>`).join('')}</td>
+        <td>
+          ${(s.items || []).map(i => `<span class="sku-chip">${esc(i.sku)} ×${i.ship_qty}</span>`).join('')}
+          ${s.status !== 'Cancelled' && (s.items || []).length
+            ? `<button class="btn btn-sm" onclick="editShipmentQty(${s.shipment_id}, '${encodeURIComponent(JSON.stringify(s.items))}')">✏️ แก้จำนวน</button>`
+            : ''}
+        </td>
       </tr>
     `).join('');
     cardEl.style.display = '';
@@ -482,7 +515,7 @@ function openModal(encoded) {
         <div class="item-sku">${esc(it.sku)}</div>
         <div class="item-remain">ค้างส่ง ${it.remaining_qty} ชิ้น</div>
       </div>
-      <input class="qty-inp" type="number" id="qty-${i}" min="1" max="${it.remaining_qty}" value="${it.remaining_qty}">
+      <input class="qty-inp" type="number" id="qty-${i}" min="1" value="${it.remaining_qty}" title="ส่งเกินจำนวนค้างได้ (จะมีการแจ้งเตือน)">
     </div>
   `).join('');
 
@@ -522,9 +555,13 @@ async function submitShipment() {
     });
     closeModal();
     const banner = document.getElementById('success-banner');
-    banner.textContent = `✅ บันทึกการจัดส่ง ${result.shipment_number} เรียบร้อย (${items.length} รายการ)`;
+    let msg = `✅ บันทึกการจัดส่ง ${result.shipment_number} เรียบร้อย (${items.length} รายการ)`;
+    if (result.warnings && result.warnings.length) {
+      msg += ' ⚠️ ' + result.warnings.map(w => `${w.sku}: ${w.message}`).join(', ');
+    }
+    banner.textContent = msg;
     banner.style.display = '';
-    setTimeout(() => { banner.style.display = 'none'; }, 6000);
+    setTimeout(() => { banner.style.display = 'none'; }, 9000);
     loadPending();
   } catch (err) {
     errEl.textContent = err.message || 'บันทึกไม่สำเร็จ';
