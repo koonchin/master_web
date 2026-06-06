@@ -401,7 +401,6 @@ async function loadPending() {
               <span id="ready-msg-${order.order_id}" style="font-size:12px;color:#16a34a"></span>
             </div>
           </div>
-          <button class="btn btn-ship" onclick="openModal('${encoded}')">📦 จัดส่งแล้ว</button>
         </div>
         <table>
           <thead><tr><th>SKU</th><th>สั่งทั้งหมด</th><th>ส่งแล้ว</th><th>ยังค้าง</th></tr></thead>
@@ -569,7 +568,6 @@ function renderModalItems() {
         </div>
         <div style="display:flex;gap:8px;align-items:center;margin-top:5px;flex-wrap:wrap">
           <button type="button" class="btn btn-sm" onclick="addSplit(${i})">＋ แยกชนิด</button>
-          ${_modalCombined ? `<input class="po-ref" type="text" placeholder="PO/ล็อต ของบรรทัดนี้ (ไม่บังคับ)" style="width:210px;font-size:12px;padding:3px 6px">` : ''}
         </div>
       </div>
     </div>
@@ -589,7 +587,9 @@ function openModal(encoded) {
 function openCombinedModal() {
   if (!_pendingItems.length) return;
   _modalCombined = true;
-  modalItems = _pendingItems.map(x => ({ ...x }));  // clone so edits don't mutate the cache
+  // clone (so edits don't mutate the cache) and sequence by order placement
+  modalItems = _pendingItems.map(x => ({ ...x }))
+    .sort((a, b) => String(a.order_number || '').localeCompare(String(b.order_number || '')));
   resetShipModalFields();
   renderModalItems();
   document.getElementById('ship-modal').classList.add('open');
@@ -614,13 +614,11 @@ async function submitShipment() {
   // order-backed items — each base line may be split into several product_type rows
   modalItems.forEach((it, i) => {
     if (!document.getElementById('chk-' + i).checked) return;
-    const row = document.getElementById('splits-' + i).closest('.item-row');
-    const po_number_ref = (row && row.querySelector('.po-ref')?.value.trim()) || null;
     const lines = document.querySelectorAll('#splits-' + i + ' .split-line');
     lines.forEach(line => {
       const qty = parseInt(line.querySelector('.qty-inp').value, 10);
       const product_type = line.querySelector('.type-sel').value;
-      if (qty > 0) items.push({ order_item_id: it.item_id, product_type, ship_qty: qty, po_number_ref });
+      if (qty > 0) items.push({ order_item_id: it.item_id, product_type, ship_qty: qty });
     });
   });
   // ad-hoc SKUs added by the factory (no backing order line)

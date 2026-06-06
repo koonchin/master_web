@@ -30,7 +30,7 @@ router.get('/my-orders', requireFactory, async (req, res) => {
         AND po.status NOT IN ('Fulfilled', 'Cancelled')
       GROUP BY poi.item_id
       HAVING remaining_qty > 0
-      ORDER BY FIELD(po.priority, 'Urgent', 'High', 'Normal', 'Low') ASC, po.est_ready_date ASC
+      ORDER BY po.order_date ASC, po.order_id ASC
     `, [factory_id]);
 
     res.json(rows);
