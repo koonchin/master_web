@@ -489,6 +489,31 @@ app.delete('/api/item-master/:itemId', async (req, res) => {
 });
 
 // ============================================================
+// CANONICAL SKU LIST (read-only, cross-DB into muslin)
+// Powers the order-to-factory SKU picker: canonical SKUs + on-hand qty.
+// On-hand comes from the external warehouse table stock_main (exact or '-F' fuzzy).
+// Returns [] on any failure (e.g. sku_master not migrated yet, or missing
+// cross-DB grant) so the picker can fall back to Item_Master.
+// ============================================================
+app.get('/api/skus', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT sm.sku_id, sm.product_id, sm.project_id, sm.name, sm.size,
+             sm.product_type, sm.price, sm.cost,
+             CAST(COALESCE(st_e.amount, st_f.amount, '0') AS SIGNED) AS qty_on_hand
+      FROM muslin.sku_master sm
+      LEFT JOIN muslin.stock_main st_e ON st_e.sku = sm.sku_id
+      LEFT JOIN muslin.stock_main st_f ON st_f.sku = CONCAT(sm.sku_id, '-F')
+      ORDER BY sm.project_id, sm.sku_id
+    `);
+    res.json(rows);
+  } catch (err) {
+    console.warn('[GET /api/skus] cross-DB read failed:', err.message);
+    res.json([]);
+  }
+});
+
+// ============================================================
 // LOGISTICS RATES
 // ============================================================
 app.get('/api/logistics-rates', async (req, res) => {

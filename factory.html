@@ -198,9 +198,13 @@
         <input type="text" id="m-ship-no" placeholder="SHP-2026-001">
       </div>
       <div class="frow">
-        <label>บริษัทขนส่ง</label>
+        <label>เลข PO (ไม่บังคับ) — ใส่เลขเดียวกันได้หลายรอบเพื่อรวม PO</label>
+        <input type="text" id="m-po-no" placeholder="PO-2026-001">
+      </div>
+      <div class="frow">
+        <label>ขนส่ง</label>
         <select id="m-logistics">
-          <option value="">-- เลือกบริษัทขนส่ง --</option>
+          <option value="">-- เลือกขนส่ง --</option>
         </select>
       </div>
       <div class="frow">
@@ -212,8 +216,13 @@
         <input type="date" id="m-eta">
       </div>
       <div class="frow">
-        <label>รายการ SKU ที่จัดส่ง *</label>
+        <label>รายการ SKU ที่จัดส่ง * <span style="font-weight:400;color:#888">(กด “+ แยกชนิด” เพื่อแยก เช่น 1 sample / 19 pajamas)</span></label>
         <div id="m-items"></div>
+      </div>
+      <div class="frow">
+        <label>SKU นอกระบบ (โรงงานเพิ่มเอง)</label>
+        <div id="m-adhoc"></div>
+        <button type="button" class="btn btn-sm" onclick="addAdhoc()" style="margin-top:6px">＋ เพิ่ม SKU นอกระบบ</button>
       </div>
       <div class="err-msg" id="modal-err" style="text-align:left;margin-top:4px;"></div>
     </div>
@@ -376,7 +385,7 @@ async function loadPending() {
             <div class="card-title">${esc(order.order_number)} — ${esc(order.project_name)}</div>
             <div class="card-sub">
               <span class="prio ${prioCls(order.priority)}">${esc(order.priority)}</span>
-              &nbsp;Due: <span class="${dueCls(order.due_date)}">${fmtDate(order.due_date)}</span>
+              &nbsp;Est: <span class="${dueCls(order.est_ready_date)}">${fmtDate(order.est_ready_date)}</span>
             </div>
             <div class="card-sub" style="margin-top:6px">
               วันคาดว่าผลิตเสร็จ:
@@ -463,14 +472,14 @@ async function loadHistory() {
 
     document.getElementById('history-tbody').innerHTML = shipments.map(s => `
       <tr>
-        <td style="font-family:var(--mono);font-size:12px">${esc(s.shipment_number)}</td>
+        <td style="font-family:var(--mono);font-size:12px">${esc(s.shipment_number)}${s.po_number ? '<br><span style="color:#888">PO: ' + esc(s.po_number) + '</span>' : ''}</td>
         <td>${esc(s.logistics_provider || '-')}</td>
         <td style="font-family:var(--mono);font-size:12px">${esc(s.tracking_number || '-')}</td>
         <td>${fmtDate(s.ship_out_date)}</td>
         <td>${fmtDate(s.est_arrival_date)}</td>
         <td><span class="status-chip ${CLS[s.status] || ''}">${TH[s.status] || esc(s.status)}</span></td>
         <td>
-          ${(s.items || []).map(i => `<span class="sku-chip">${esc(i.sku)} ×${i.ship_qty}</span>`).join('')}
+          ${(s.items || []).map(i => `<span class="sku-chip">${esc(i.sku)}${i.product_type ? ' · ' + esc(i.product_type) : ''} ×${i.ship_qty}</span>`).join('')}
           ${s.status !== 'Cancelled' && (s.items || []).length
             ? `<button class="btn btn-sm" onclick="editShipmentQty(${s.shipment_id}, '${encodeURIComponent(JSON.stringify(s.items))}')">✏️ แก้จำนวน</button>`
             : ''}
@@ -483,39 +492,73 @@ async function loadHistory() {
   }
 }
 
-// ── LOGISTICS DROPDOWN ──
+// ── LOGISTICS DROPDOWN (4 fixed options) ──
+const LOGISTICS_OPTIONS = ['HLT ship', 'HLT truck', 'CTW ship', 'CTW truck'];
+const PRODUCT_TYPES = ['sample', 'pajamas', 'material', 'accessory'];
 let logisticsLoaded = false;
-async function loadLogistics() {
+function loadLogistics() {
   if (logisticsLoaded) return;
   const sel = document.getElementById('m-logistics');
-  let companies = ['HLT', 'CTW']; // fallback
-  try {
-    const rates = await apiFetch('/logistics-rates');
-    const names = [...new Set((rates || []).map(r => r.company_name).filter(Boolean))];
-    if (names.length) companies = names;
-  } catch { /* keep fallback list */ }
-  sel.innerHTML = '<option value="">-- เลือกบริษัทขนส่ง --</option>' +
-    companies.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  sel.innerHTML = '<option value="">-- เลือกขนส่ง --</option>' +
+    LOGISTICS_OPTIONS.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
   logisticsLoaded = true;
+}
+function typeSelectHtml(sel) {
+  return `<select class="type-sel" style="padding:3px 5px;font-size:12px">` +
+    PRODUCT_TYPES.map(t => `<option value="${t}"${t === (sel || 'pajamas') ? ' selected' : ''}>${t}</option>`).join('') +
+    `</select>`;
+}
+// add an extra type-split line under base item i
+function addSplit(i) {
+  const box = document.getElementById('splits-' + i);
+  if (!box) return;
+  const line = document.createElement('div');
+  line.className = 'split-line';
+  line.style = 'display:flex;gap:6px;align-items:center;margin-top:4px';
+  line.innerHTML = typeSelectHtml('sample') +
+    `<input class="qty-inp" type="number" min="1" value="1" style="width:80px">` +
+    `<button type="button" class="btn btn-sm" onclick="this.closest('.split-line').remove()">✕</button>`;
+  box.appendChild(line);
+}
+let _adhocN = 0;
+function addAdhoc() {
+  const box = document.getElementById('m-adhoc');
+  const line = document.createElement('div');
+  line.className = 'adhoc-line';
+  line.style = 'display:flex;gap:6px;align-items:center;margin-top:4px';
+  line.innerHTML =
+    `<input class="adhoc-sku" type="text" placeholder="SKU" style="width:120px">` +
+    typeSelectHtml('pajamas') +
+    `<input class="adhoc-qty qty-inp" type="number" min="1" value="1" placeholder="จำนวน" style="width:80px">` +
+    `<button type="button" class="btn btn-sm" onclick="this.closest('.adhoc-line').remove()">✕</button>`;
+  box.appendChild(line);
+  _adhocN++;
 }
 
 // ── MODAL ──
 function openModal(encoded) {
   loadLogistics();
   modalItems = JSON.parse(decodeURIComponent(encoded));
-  ['m-ship-no','m-logistics'].forEach(id => document.getElementById(id).value = '');
+  ['m-ship-no','m-po-no','m-logistics'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('m-ship-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('m-eta').value = '';
   document.getElementById('modal-err').textContent = '';
+  document.getElementById('m-adhoc').innerHTML = '';
 
   document.getElementById('m-items').innerHTML = modalItems.map((it, i) => `
-    <div class="item-row">
-      <input type="checkbox" id="chk-${i}" checked style="width:16px;height:16px;cursor:pointer;flex-shrink:0">
-      <div class="item-label">
+    <div class="item-row" style="align-items:flex-start">
+      <input type="checkbox" id="chk-${i}" checked style="width:16px;height:16px;cursor:pointer;flex-shrink:0;margin-top:4px">
+      <div class="item-label" style="flex:1">
         <div class="item-sku">${esc(it.sku)}</div>
         <div class="item-remain">ค้างส่ง ${it.remaining_qty} ชิ้น</div>
+        <div class="splits" id="splits-${i}">
+          <div class="split-line" style="display:flex;gap:6px;align-items:center;margin-top:4px">
+            ${typeSelectHtml('pajamas')}
+            <input class="qty-inp" type="number" min="1" value="${it.remaining_qty}" style="width:80px" title="ส่งเกินจำนวนค้างได้ (จะมีการแจ้งเตือน)">
+          </div>
+        </div>
+        <button type="button" class="btn btn-sm" onclick="addSplit(${i})" style="margin-top:5px">＋ แยกชนิด</button>
       </div>
-      <input class="qty-inp" type="number" id="qty-${i}" min="1" value="${it.remaining_qty}" title="ส่งเกินจำนวนค้างได้ (จะมีการแจ้งเตือน)">
     </div>
   `).join('');
 
@@ -527,6 +570,7 @@ function closeModal() { document.getElementById('ship-modal').classList.remove('
 async function submitShipment() {
   const errEl = document.getElementById('modal-err');
   const shipment_number    = document.getElementById('m-ship-no').value.trim();
+  const po_number          = document.getElementById('m-po-no').value.trim() || null;
   const logistics_provider = document.getElementById('m-logistics').value.trim() || null;
   const ship_out_date      = document.getElementById('m-ship-date').value;
   const est_arrival_date   = document.getElementById('m-eta').value;
@@ -537,11 +581,22 @@ async function submitShipment() {
   if (!est_arrival_date) { errEl.textContent = 'กรุณาระบุวัน ETA'; return; }
 
   const items = [];
+  // order-backed items — each base line may be split into several product_type rows
   modalItems.forEach((it, i) => {
-    if (document.getElementById('chk-' + i).checked) {
-      const qty = parseInt(document.getElementById('qty-' + i).value, 10);
-      if (qty > 0) items.push({ order_item_id: it.item_id, ship_qty: qty });
-    }
+    if (!document.getElementById('chk-' + i).checked) return;
+    const lines = document.querySelectorAll('#splits-' + i + ' .split-line');
+    lines.forEach(line => {
+      const qty = parseInt(line.querySelector('.qty-inp').value, 10);
+      const product_type = line.querySelector('.type-sel').value;
+      if (qty > 0) items.push({ order_item_id: it.item_id, product_type, ship_qty: qty });
+    });
+  });
+  // ad-hoc SKUs added by the factory (no backing order line)
+  document.querySelectorAll('#m-adhoc .adhoc-line').forEach(line => {
+    const sku = line.querySelector('.adhoc-sku').value.trim();
+    const qty = parseInt(line.querySelector('.adhoc-qty').value, 10);
+    const product_type = line.querySelector('.type-sel').value;
+    if (sku && qty > 0) items.push({ sku, product_type, ship_qty: qty });
   });
   if (!items.length) { errEl.textContent = 'กรุณาเลือกอย่างน้อย 1 รายการ'; return; }
 
@@ -551,7 +606,7 @@ async function submitShipment() {
   try {
     const result = await apiFetch('/shipments', {
       method: 'POST',
-      body: JSON.stringify({ shipment_number, logistics_provider, ship_out_date, est_arrival_date, items }),
+      body: JSON.stringify({ shipment_number, po_number, logistics_provider, ship_out_date, est_arrival_date, items }),
     });
     closeModal();
     const banner = document.getElementById('success-banner');
