@@ -1852,8 +1852,8 @@ async function saveReceiving() {
 // ============================================================
 async function renderItemMaster(body, topbar) {
   topbar.innerHTML = `
-    <div class="topbar-left"><h2>🗂 Item Master</h2><p>ข้อมูล SKU, ประเภท และขนาดบรรจุภัณฑ์</p></div>
-    <div class="topbar-right"><button class="btn-primary" onclick="openItemMasterModal()">＋ เพิ่มสินค้า</button></div>`;
+    <div class="topbar-left"><h2>🗂 Item Master</h2><p>ข้อมูล SKU, ประเภท และขนาดบรรจุภัณฑ์ — แก้ไขได้เฉพาะรายการที่มีอยู่; สร้าง SKU ใหม่ที่หน้า Create SKU</p></div>
+    <div class="topbar-right"><span class="td-muted" style="font-size:13px">สร้าง SKU ใหม่ → หน้า Create SKU</span></div>`;
 
   const items = _itemMasterList = await API.get('/item-master');
   const TYPE_ICON = { Product: '👕', Material: '📦', Others: '🔲' };

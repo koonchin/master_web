@@ -448,6 +448,23 @@ app.post('/api/item-master', async (req, res) => {
             carton_width, carton_length, carton_height, carton_weight, carton_volume,
             default_weight_per_pc } = req.body;
     if (!item_id || !item_name) return res.status(400).json({ error: 'item_id and item_name required' });
+    // Divergence guard (transition): new SKUs must be created via the canonical
+    // "Create SKU" page (which sets project + dual-writes). Block creating an
+    // item_id that does not already exist in the canonical master. Updating an
+    // existing one still goes through PUT. If the cross-DB check is unavailable,
+    // fail safe (block) — a new SKU here would otherwise diverge from sku_master.
+    try {
+      const [[exists]] = await pool.query(
+        'SELECT 1 AS ok FROM muslin.sku_master WHERE sku_id = ?', [item_id]
+      );
+      if (!exists) {
+        return res.status(400).json({
+          error: 'สร้าง SKU ใหม่ต้องทำที่หน้า Create SKU (กำหนด project + บันทึกครบทุกฐาน). หน้านี้แก้ไขได้เฉพาะรายการที่มีอยู่แล้ว',
+        });
+      }
+    } catch (gErr) {
+      return res.status(503).json({ error: 'canonical master unavailable: ' + gErr.message });
+    }
     const { measurement_photo_url } = req.body;
     await pool.query(
       `INSERT INTO Item_Master (item_id,item_name,item_type,qty_per_carton,

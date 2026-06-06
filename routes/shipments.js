@@ -112,6 +112,7 @@ router.post('/', requireFactory, async (req, res) => {
   // value marks an ad-hoc factory SKU (not tied to any production order line); for
   // those the caller must supply `sku` directly. A single order line may appear in
   // several items with different product_type (type-split, e.g. 1 sample + 19 pajamas).
+  const seenKeys = new Set();
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     if (!item.ship_qty || item.ship_qty <= 0)
@@ -120,6 +121,16 @@ router.post('/', requireFactory, async (req, res) => {
       return res.status(400).json({ error: `items[${i}]: order_item_id or sku is required` });
     if (item.product_type && !VALID_PRODUCT_TYPES.includes(item.product_type))
       return res.status(400).json({ error: `items[${i}].product_type must be one of: ${VALID_PRODUCT_TYPES.join(', ')}` });
+    // Reject duplicate lines within this request. The DB unique key cannot catch
+    // ad-hoc duplicates (NULL order_item_id compares as distinct), so dedupe here:
+    // combine the qty into a single line instead of sending the same key twice.
+    const type = item.product_type || 'pajamas';
+    const key = item.order_item_id
+      ? `oi:${item.order_item_id}|${type}`
+      : `ah:${String(item.sku).trim().toUpperCase()}|${type}`;
+    if (seenKeys.has(key))
+      return res.status(400).json({ error: `items[${i}]: รายการซ้ำ (${item.order_item_id ? 'order line' : item.sku} · ${type}) — รวมจำนวนเป็นบรรทัดเดียว` });
+    seenKeys.add(key);
   }
 
   // Validate ownership + remaining qty for each item (before transaction)
