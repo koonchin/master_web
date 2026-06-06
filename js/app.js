@@ -1852,8 +1852,8 @@ async function saveReceiving() {
 // ============================================================
 async function renderItemMaster(body, topbar) {
   topbar.innerHTML = `
-    <div class="topbar-left"><h2>🗂 Item Master</h2><p>ข้อมูล SKU, ประเภท และขนาดบรรจุภัณฑ์</p></div>
-    <div class="topbar-right"><button class="btn-primary" onclick="openItemMasterModal()">＋ เพิ่มสินค้า</button></div>`;
+    <div class="topbar-left"><h2>🗂 Item Master</h2><p>ข้อมูล SKU, ประเภท และขนาดบรรจุภัณฑ์ — แก้ไขได้เฉพาะรายการที่มีอยู่; สร้าง SKU ใหม่ที่หน้า Create SKU</p></div>
+    <div class="topbar-right"><span class="td-muted" style="font-size:13px">สร้าง SKU ใหม่ → หน้า Create SKU</span></div>`;
 
   const items = _itemMasterList = await API.get('/item-master');
   const TYPE_ICON = { Product: '👕', Material: '📦', Others: '🔲' };
@@ -2162,6 +2162,17 @@ async function deleteRate(id) {
 // PRODUCTION ORDER (สร้างใบสั่งผลิต)
 // ============================================================
 let _prodItemCount = 0;
+let _skuStock = [];
+let _skuOnHand = {};
+function prodOnHandText(sku) {
+  const v = _skuOnHand[String(sku || '').trim()];
+  return (v === undefined || v === null) ? '–' : String(v);
+}
+function prodSkuChanged(input) {
+  const tr = input.closest('tr');
+  const cell = tr && tr.querySelector('.prod-onhand');
+  if (cell) cell.textContent = prodOnHandText(input.value);
+}
 async function renderProductionOrder(body, topbar) {
   topbar.innerHTML = `
     <div class="topbar-left"><h2>📦 สร้างใบสั่งผลิต</h2></div>
@@ -2170,6 +2181,13 @@ async function renderProductionOrder(body, topbar) {
   let factories = [];
   try { factories = await API.get('/factories'); } catch { factories = []; }
   try { _itemMasterList = await API.get('/item-master'); } catch { _itemMasterList = []; }
+  // Canonical SKU list with on-hand (cross-DB muslin.sku_master + stock_main).
+  // Falls back to Item_Master if the /skus endpoint is unavailable.
+  try { _skuStock = await API.get('/skus'); } catch { _skuStock = []; }
+  if (!_skuStock.length && _itemMasterList.length) {
+    _skuStock = _itemMasterList.map(it => ({ sku_id: it.item_id, name: it.item_name, qty_on_hand: null }));
+  }
+  _skuOnHand = Object.fromEntries(_skuStock.map(s => [String(s.sku_id), s.qty_on_hand]));
 
   // Distinct project names from existing POs (same source as the PO form) → project dropdown
   let _projSource = [];
@@ -2191,11 +2209,6 @@ async function renderProductionOrder(body, topbar) {
           </select>
         </div>
         <div class="form-group">
-          <label>โปรเจกต์ <span style="color:#ef4444">*</span></label>
-          <input class="form-control" id="prod-project" list="prod-project-datalist" placeholder="เลือกหรือพิมพ์ชื่อโปรเจกต์" autocomplete="off">
-          <datalist id="prod-project-datalist">${projectOpts}</datalist>
-        </div>
-        <div class="form-group">
           <label>ความเร่งด่วน</label>
           <select class="form-control" id="prod-priority">
             <option value="Urgent">🔴 Urgent</option>
@@ -2209,11 +2222,11 @@ async function renderProductionOrder(body, topbar) {
           <input class="form-control" id="prod-order-person" placeholder="ชื่อผู้สั่งผลิต">
         </div>
         <div class="form-group">
-          <label>กำหนดส่ง <span style="color:#ef4444">*</span></label>
-          <input class="form-control" type="date" id="prod-due-date" value="${today()}">
+          <label>วันที่สั่ง (Order date) <span style="color:#ef4444">*</span></label>
+          <input class="form-control" type="date" id="prod-order-date" value="${today()}">
         </div>
         <div class="form-group">
-          <label>วันคาดว่าผลิตเสร็จ (โรงงานแก้ได้ภายหลัง)</label>
+          <label>วันคาดว่าเสร็จ/ถึง (Est. date) <span style="color:#ef4444">*</span></label>
           <input class="form-control" type="date" id="prod-ready-date">
         </div>
         <div class="form-group" style="grid-column:1/-1">
@@ -2224,14 +2237,15 @@ async function renderProductionOrder(body, topbar) {
     </div>
     <div class="card">
       <div class="card-header"><div class="card-title">📦 รายการ SKU</div><button class="btn-secondary btn-sm" onclick="addProdItem()">＋ เพิ่ม SKU</button></div>
-      <datalist id="prod-sku-datalist">${_itemMasterList.map(it => `<option value="${it.item_id}">${it.item_name}</option>`).join('')}</datalist>
+      <datalist id="prod-sku-datalist">${_skuStock.map(s => `<option value="${s.sku_id}">${(s.name || '')}${s.qty_on_hand != null ? ' · คงเหลือ ' + s.qty_on_hand : ''}</option>`).join('')}</datalist>
       <div class="items-table-wrap">
         <table>
-          <thead><tr><th style="width:30px">#</th><th>SKU</th><th style="width:130px">จำนวน</th><th style="width:44px"></th></tr></thead>
+          <thead><tr><th style="width:30px">#</th><th>SKU</th><th style="width:90px">คงเหลือ</th><th style="width:130px">จำนวน</th><th style="width:44px"></th></tr></thead>
           <tbody id="prod-items-body">
             <tr id="prod-item-0">
               <td class="td-muted">1</td>
-              <td><input class="form-control" list="prod-sku-datalist" placeholder="เช่น MP-BJM-001-S" style="border:none;padding:4px 0" autocomplete="off"></td>
+              <td><input class="form-control" list="prod-sku-datalist" placeholder="เช่น MP-BJM-001-S" style="border:none;padding:4px 0" autocomplete="off" oninput="prodSkuChanged(this)"></td>
+              <td class="td-muted prod-onhand">–</td>
               <td><input class="form-control" type="number" placeholder="0" min="1" style="border:none;padding:4px 0"></td>
               <td></td>
             </tr>
@@ -2267,7 +2281,8 @@ function addProdItem() {
   tr.id = `prod-item-${idx}`;
   tr.innerHTML = `
     <td class="td-muted">${idx + 1}</td>
-    <td><input class="form-control" list="prod-sku-datalist" placeholder="SKU" style="border:none;padding:4px 0" autocomplete="off"></td>
+    <td><input class="form-control" list="prod-sku-datalist" placeholder="SKU" style="border:none;padding:4px 0" autocomplete="off" oninput="prodSkuChanged(this)"></td>
+    <td class="td-muted prod-onhand">–</td>
     <td><input class="form-control" type="number" placeholder="0" min="1" style="border:none;padding:4px 0"></td>
     <td><button style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:18px">✕</button></td>`;
   tr.querySelector('button').onclick = () => { tr.remove(); reindexProdItems(); };
@@ -2281,17 +2296,16 @@ function reindexProdItems() {
 
 async function submitProductionOrder() {
   const factoryId = document.getElementById('prod-factory').value;
-  const project = document.getElementById('prod-project').value.trim();
   const priority = document.getElementById('prod-priority').value;
   const orderPerson = document.getElementById('prod-order-person').value.trim();
-  const dueDate = document.getElementById('prod-due-date').value;
+  const orderDate = document.getElementById('prod-order-date').value;
   const readyDate = document.getElementById('prod-ready-date').value;
   const notes = document.getElementById('prod-notes').value.trim();
 
   if (!factoryId) { toast('กรุณาเลือกโรงงาน', 'error'); return; }
-  if (!project) { toast('กรุณากรอกชื่อโปรเจกต์', 'error'); return; }
   if (!orderPerson) { toast('กรุณากรอกชื่อคนสั่ง', 'error'); return; }
-  if (!dueDate) { toast('กรุณาระบุกำหนดส่ง', 'error'); return; }
+  if (!orderDate) { toast('กรุณาระบุวันที่สั่ง', 'error'); return; }
+  if (!readyDate) { toast('กรุณาระบุวันคาดว่าเสร็จ/ถึง (Est.)', 'error'); return; }
 
   const rows = document.querySelectorAll('#prod-items-body tr');
   const items = [];
@@ -2305,12 +2319,10 @@ async function submitProductionOrder() {
 
   try {
     await API.post('/production-orders', {
-      project_name: project,
       priority,
       order_person: orderPerson,
-      order_date: today(),
-      due_date: dueDate,
-      est_ready_date: readyDate || null,
+      order_date: orderDate,
+      est_ready_date: readyDate,
       items
     });
     toast('สร้างใบสั่งผลิตสำเร็จ', 'success');

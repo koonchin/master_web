@@ -6,6 +6,8 @@ const { syncMirrorForShipment, syncRemainderPo } = require('../po-mirror');
 const router = express.Router();
 
 const VALID_FACTORY_STATUSES = ['Thai_Customs', 'Arrived', 'Completed', 'Cancelled'];
+const VALID_LOGISTICS = ['HLT ship', 'HLT truck', 'CTW ship', 'CTW truck'];
+const VALID_PRODUCT_TYPES = ['sample', 'pajamas', 'material', 'accessory'];
 
 // GET /api/shipments/my-orders
 // Returns production order items assigned to this factory with pending qty to ship
@@ -28,7 +30,7 @@ router.get('/my-orders', requireFactory, async (req, res) => {
         AND po.status NOT IN ('Fulfilled', 'Cancelled')
       GROUP BY poi.item_id
       HAVING remaining_qty > 0
-      ORDER BY FIELD(po.priority, 'Urgent', 'High', 'Normal', 'Low') ASC, po.due_date ASC
+      ORDER BY FIELD(po.priority, 'Urgent', 'High', 'Normal', 'Low') ASC, po.est_ready_date ASC
     `, [factory_id]);
 
     res.json(rows);
@@ -45,7 +47,7 @@ router.get('/mine', requireFactory, async (req, res) => {
     const factory_id = req.user.factory_id;
 
     const [shipmentRows] = await pool.query(`
-      SELECT shipment_id, factory_id, shipment_number, logistics_provider,
+      SELECT shipment_id, factory_id, shipment_number, po_number, logistics_provider,
              tracking_number, ship_out_date, est_arrival_date, status, created_at
       FROM factory_shipments
       WHERE factory_id = ?
@@ -57,7 +59,7 @@ router.get('/mine', requireFactory, async (req, res) => {
     const shipmentIds = shipmentRows.map(s => s.shipment_id);
     const [itemRows] = await pool.query(`
       SELECT fsi.id AS shipment_item_id, fsi.shipment_id, fsi.order_item_id,
-             fsi.sku, fsi.ship_qty
+             fsi.po_number_ref, fsi.sku, fsi.product_type, fsi.ship_qty
       FROM factory_shipment_items fsi
       WHERE fsi.shipment_id IN (?)
     `, [shipmentIds]);
@@ -86,6 +88,7 @@ router.get('/mine', requireFactory, async (req, res) => {
 router.post('/', requireFactory, async (req, res) => {
   const {
     shipment_number,
+    po_number,
     logistics_provider,
     tracking_number,
     ship_out_date,
@@ -101,18 +104,40 @@ router.post('/', requireFactory, async (req, res) => {
   if (!ship_out_date)     return res.status(400).json({ error: 'ship_out_date is required' });
   if (!est_arrival_date)  return res.status(400).json({ error: 'est_arrival_date is required' });
   if (!items || items.length === 0) return res.status(400).json({ error: 'items are required' });
+  if (logistics_provider && !VALID_LOGISTICS.includes(logistics_provider)) {
+    return res.status(400).json({ error: `logistics_provider must be one of: ${VALID_LOGISTICS.join(', ')}` });
+  }
 
-  // Validate ship_qty > 0 for every item before any DB call
+  // Validate each item before any DB call. order_item_id is OPTIONAL — a null/absent
+  // value marks an ad-hoc factory SKU (not tied to any production order line); for
+  // those the caller must supply `sku` directly. A single order line may appear in
+  // several items with different product_type (type-split, e.g. 1 sample + 19 pajamas).
+  const seenKeys = new Set();
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    if (!item.order_item_id) return res.status(400).json({ error: `items[${i}].order_item_id is required` });
     if (!item.ship_qty || item.ship_qty <= 0)
       return res.status(400).json({ error: `items[${i}].ship_qty must be > 0` });
+    if (!item.order_item_id && !item.sku)
+      return res.status(400).json({ error: `items[${i}]: order_item_id or sku is required` });
+    if (item.product_type && !VALID_PRODUCT_TYPES.includes(item.product_type))
+      return res.status(400).json({ error: `items[${i}].product_type must be one of: ${VALID_PRODUCT_TYPES.join(', ')}` });
+    // Reject duplicate lines within this request. The DB unique key cannot catch
+    // ad-hoc duplicates (NULL order_item_id compares as distinct), so dedupe here:
+    // combine the qty into a single line instead of sending the same key twice.
+    const type = item.product_type || 'pajamas';
+    const key = item.order_item_id
+      ? `oi:${item.order_item_id}|${type}`
+      : `ah:${String(item.sku).trim().toUpperCase()}|${type}`;
+    if (seenKeys.has(key))
+      return res.status(400).json({ error: `items[${i}]: รายการซ้ำ (${item.order_item_id ? 'order line' : item.sku} · ${type}) — รวมจำนวนเป็นบรรทัดเดียว` });
+    seenKeys.add(key);
   }
 
   // Validate ownership + remaining qty for each item (before transaction)
   try {
     for (const item of items) {
+      // Ad-hoc factory SKU (no backing order line): nothing to own-check / over-ship.
+      if (!item.order_item_id) continue;
       // Verify item belongs to this factory
       const [[poi]] = await pool.query(`
         SELECT poi.item_id, poi.sku, poi.order_qty, poi.factory_id
@@ -158,15 +183,17 @@ router.post('/', requireFactory, async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    // Insert shipment header
+    // Insert shipment header (po_number is an optional second reference besides
+    // shipment_number / tracking_number).
     const [headerResult] = await conn.query(`
       INSERT INTO factory_shipments
-        (factory_id, shipment_number, logistics_provider, tracking_number,
+        (factory_id, shipment_number, po_number, logistics_provider, tracking_number,
          ship_out_date, est_arrival_date, status)
-      VALUES (?, ?, ?, ?, ?, ?, 'Shipped_CN')
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'Shipped_CN')
     `, [
       factory_id,
       shipment_number,
+      po_number || null,
       logistics_provider || null,
       tracking_number || shipment_number,
       ship_out_date,
@@ -174,16 +201,24 @@ router.post('/', requireFactory, async (req, res) => {
     ]);
     const shipment_id = headerResult.insertId;
 
-    // Insert items — fetch sku from production_order_items
+    // Insert items. For order-backed items the SKU comes from the order line; for
+    // ad-hoc factory SKUs it comes straight from the request. product_type carries
+    // the per-line type-split; po_number_ref assigns the line to a combined PO/lot.
     for (const item of items) {
-      const [[poi]] = await conn.query(
-        'SELECT sku FROM production_order_items WHERE item_id = ?',
-        [item.order_item_id]
-      );
+      let sku = item.sku;
+      if (item.order_item_id) {
+        const [[poi]] = await conn.query(
+          'SELECT sku FROM production_order_items WHERE item_id = ?',
+          [item.order_item_id]
+        );
+        sku = (poi && poi.sku) || item.sku;
+      }
       await conn.query(`
-        INSERT INTO factory_shipment_items (shipment_id, order_item_id, sku, ship_qty)
-        VALUES (?, ?, ?, ?)
-      `, [shipment_id, item.order_item_id, poi.sku, item.ship_qty]);
+        INSERT INTO factory_shipment_items
+          (shipment_id, order_item_id, po_number_ref, sku, product_type, ship_qty)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [shipment_id, item.order_item_id || null, item.po_number_ref || null,
+          sku, item.product_type || 'pajamas', item.ship_qty]);
     }
 
     // Mirror shipment state into World A po_headers (Shipped_CN + departure_date).
@@ -193,13 +228,13 @@ router.post('/', requireFactory, async (req, res) => {
 
     // Return created shipment with items
     const [[shipment]] = await pool.query(`
-      SELECT shipment_id, factory_id, shipment_number, logistics_provider,
+      SELECT shipment_id, factory_id, shipment_number, po_number, logistics_provider,
              tracking_number, ship_out_date, est_arrival_date, status, created_at
       FROM factory_shipments WHERE shipment_id = ?
     `, [shipment_id]);
 
     const [createdItems] = await pool.query(`
-      SELECT id AS shipment_item_id, shipment_id, order_item_id, sku, ship_qty
+      SELECT id AS shipment_item_id, shipment_id, order_item_id, po_number_ref, sku, product_type, ship_qty
       FROM factory_shipment_items WHERE shipment_id = ?
     `, [shipment_id]);
 
@@ -253,7 +288,7 @@ router.patch('/:id/status', requireFactory, async (req, res) => {
     }
 
     const [[shipment]] = await pool.query(`
-      SELECT shipment_id, factory_id, shipment_number, logistics_provider,
+      SELECT shipment_id, factory_id, shipment_number, po_number, logistics_provider,
              tracking_number, ship_out_date, est_arrival_date, status, created_at
       FROM factory_shipments WHERE shipment_id = ?
     `, [shipment_id]);
@@ -344,7 +379,7 @@ router.patch('/:id/items', requireFactory, async (req, res) => {
     }
 
     const [updated] = await pool.query(
-      `SELECT id AS shipment_item_id, shipment_id, order_item_id, sku, ship_qty
+      `SELECT id AS shipment_item_id, shipment_id, order_item_id, po_number_ref, sku, product_type, ship_qty
        FROM factory_shipment_items WHERE shipment_id = ?`,
       [shipment_id]
     );

@@ -50,11 +50,14 @@ router.get('/', requireAdmin, async (req, res) => {
 
 // POST /api/production-orders — create a new order with items
 router.post('/', requireAdmin, async (req, res) => {
-  const { order_number, project_name, order_person, priority, order_date, due_date: bodyDueDate, est_ready_date, items = [] } = req.body;
+  const { order_number, order_person, priority, order_date, est_ready_date, items = [] } = req.body;
 
-  // Validate required fields (order_number is auto-generated below if omitted)
-  if (!project_name) return res.status(400).json({ error: 'project_name is required' });
+  // Validate required fields (order_number is auto-generated below if omitted).
+  // Project is no longer chosen here — it lives at the SKU level and is derived below.
   if (!items || items.length === 0) return res.status(400).json({ error: 'items are required' });
+  // order_date is the primary date; est date (estimated ready/arrival) is mandatory.
+  if (!order_date)      return res.status(400).json({ error: 'order_date is required' });
+  if (!est_ready_date)  return res.status(400).json({ error: 'est_ready_date is required' });
 
   // Validate priority
   if (priority && !VALID_PRIORITIES.includes(priority)) {
@@ -86,18 +89,26 @@ router.post('/', requireAdmin, async (req, res) => {
       finalOrderNumber = `PROD-${ymd}-${String(n + 1).padStart(3, '0')}`;
     }
 
-    // due_date: honor the value chosen on the form; otherwise derive from priority SLA
-    let due_date = bodyDueDate || null;
-    if (!due_date && priority && order_date) {
-      const [[sla]] = await conn.query(
-        'SELECT ship_within_max_days FROM priority_sla WHERE priority = ?',
-        [priority]
+    // due_date is dropped (priority SLA removed). order_date + mandatory est date
+    // now drive scheduling.
+    const due_date = null;
+
+    // Project is defined at the SKU level — derive the header project_name from the
+    // order's SKUs via a cross-DB read into muslin. Best-effort: exactly one project
+    // → its name; multiple → "Mixed"; none/unreadable → "(unknown)".
+    let project_name = '(unknown)';
+    try {
+      const skuList = [...new Set(items.map(it => String(it.sku).trim()))];
+      const [projRows] = await conn.query(
+        `SELECT DISTINCT p.name
+           FROM muslin.sku sk JOIN muslin.projects p ON p.id = sk.project_id
+          WHERE sk.id IN (?)`,
+        [skuList]
       );
-      if (sla) {
-        const base = new Date(order_date + 'T00:00:00');
-        base.setDate(base.getDate() + sla.ship_within_max_days);
-        due_date = base.toISOString().split('T')[0];
-      }
+      if (projRows.length === 1) project_name = projRows[0].name;
+      else if (projRows.length > 1) project_name = 'Mixed';
+    } catch (e) {
+      console.warn('[production-orders] project derivation failed (cross-DB):', e.message);
     }
 
     // Insert order header
