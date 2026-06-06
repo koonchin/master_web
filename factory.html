@@ -159,6 +159,10 @@
         <div style="font-weight:600;margin-bottom:6px">ไม่มีงานค้าง</div>
         <div>ทุก order จัดส่งครบแล้ว</div>
       </div>
+      <div id="combined-bar" style="display:none;margin-bottom:14px;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-ship" onclick="openCombinedModal()">📦 จัดส่งแบบรวม PO (เลือก SKU ข้ามออเดอร์)</button>
+        <span class="td-muted" style="font-size:12px">รวม SKU จากหลายออเดอร์เข้าใบจัดส่ง/PO เดียว และกำหนด PO ต่อบรรทัดได้</span>
+      </div>
       <div id="pending-list"></div>
     </div>
 
@@ -347,7 +351,9 @@ async function loadPending() {
 
   try {
     const items = await apiFetch('/shipments/my-orders');
+    _pendingItems = items;
     loaderEl.style.display = 'none';
+    document.getElementById('combined-bar').style.display = items.length ? 'flex' : 'none';
     if (!items.length) { emptyEl.style.display = ''; return; }
 
     // Group by order_id
@@ -536,20 +542,24 @@ function addAdhoc() {
 }
 
 // ── MODAL ──
-function openModal(encoded) {
+let _modalCombined = false;   // combined mode = pick SKUs across multiple orders into one shipment/PO
+let _pendingItems  = [];      // raw /shipments/my-orders array (all pending lines for this factory)
+
+function resetShipModalFields() {
   loadLogistics();
-  modalItems = JSON.parse(decodeURIComponent(encoded));
   ['m-ship-no','m-po-no','m-logistics'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('m-ship-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('m-eta').value = '';
   document.getElementById('modal-err').textContent = '';
   document.getElementById('m-adhoc').innerHTML = '';
+}
 
+function renderModalItems() {
   document.getElementById('m-items').innerHTML = modalItems.map((it, i) => `
     <div class="item-row" style="align-items:flex-start">
       <input type="checkbox" id="chk-${i}" checked style="width:16px;height:16px;cursor:pointer;flex-shrink:0;margin-top:4px">
       <div class="item-label" style="flex:1">
-        <div class="item-sku">${esc(it.sku)}</div>
+        <div class="item-sku">${esc(it.sku)}${_modalCombined && it.order_number ? ` <span class="td-muted" style="font-weight:400;font-size:12px">· ${esc(it.order_number)}</span>` : ''}</div>
         <div class="item-remain">ค้างส่ง ${it.remaining_qty} ชิ้น</div>
         <div class="splits" id="splits-${i}">
           <div class="split-line" style="display:flex;gap:6px;align-items:center;margin-top:4px">
@@ -557,11 +567,31 @@ function openModal(encoded) {
             <input class="qty-inp" type="number" min="1" value="${it.remaining_qty}" style="width:80px" title="ส่งเกินจำนวนค้างได้ (จะมีการแจ้งเตือน)">
           </div>
         </div>
-        <button type="button" class="btn btn-sm" onclick="addSplit(${i})" style="margin-top:5px">＋ แยกชนิด</button>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:5px;flex-wrap:wrap">
+          <button type="button" class="btn btn-sm" onclick="addSplit(${i})">＋ แยกชนิด</button>
+          ${_modalCombined ? `<input class="po-ref" type="text" placeholder="PO/ล็อต ของบรรทัดนี้ (ไม่บังคับ)" style="width:210px;font-size:12px;padding:3px 6px">` : ''}
+        </div>
       </div>
     </div>
   `).join('');
+}
 
+// per-order shipment (button on each order card)
+function openModal(encoded) {
+  _modalCombined = false;
+  modalItems = JSON.parse(decodeURIComponent(encoded));
+  resetShipModalFields();
+  renderModalItems();
+  document.getElementById('ship-modal').classList.add('open');
+}
+
+// combined shipment: choose SKUs across ALL pending orders into one shipment/PO
+function openCombinedModal() {
+  if (!_pendingItems.length) return;
+  _modalCombined = true;
+  modalItems = _pendingItems.map(x => ({ ...x }));  // clone so edits don't mutate the cache
+  resetShipModalFields();
+  renderModalItems();
   document.getElementById('ship-modal').classList.add('open');
 }
 
@@ -584,11 +614,13 @@ async function submitShipment() {
   // order-backed items — each base line may be split into several product_type rows
   modalItems.forEach((it, i) => {
     if (!document.getElementById('chk-' + i).checked) return;
+    const row = document.getElementById('splits-' + i).closest('.item-row');
+    const po_number_ref = (row && row.querySelector('.po-ref')?.value.trim()) || null;
     const lines = document.querySelectorAll('#splits-' + i + ' .split-line');
     lines.forEach(line => {
       const qty = parseInt(line.querySelector('.qty-inp').value, 10);
       const product_type = line.querySelector('.type-sel').value;
-      if (qty > 0) items.push({ order_item_id: it.item_id, product_type, ship_qty: qty });
+      if (qty > 0) items.push({ order_item_id: it.item_id, product_type, ship_qty: qty, po_number_ref });
     });
   });
   // ad-hoc SKUs added by the factory (no backing order line)
