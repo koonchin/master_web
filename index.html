@@ -52,9 +52,8 @@
           <span class="icon">📋</span><span>รายการ PO ทั้งหมด</span>
           <span class="nav-badge" id="overdue-badge" style="display:none">0</span>
         </button>
-        <button class="nav-item" data-view="create-po" onclick="navigate('create-po');closeSidebar()">
-          <span class="icon">➕</span><span>สร้าง PO ใหม่</span>
-        </button>
+        <!-- "สร้าง PO ใหม่" removed: POs are now auto-created from production orders
+             (production-order → po-mirror.js syncOrderMirror). PO list/detail stay. -->
         <!-- Item Master & Logistics Rates moved to the project_dashboard Config page.
              Item data for the PO picker still loads via GET /api/item-master. -->
         <button class="nav-item" data-view="production-order" onclick="navigate('production-order');closeSidebar()">
