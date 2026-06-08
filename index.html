@@ -55,12 +55,8 @@
         <button class="nav-item" data-view="create-po" onclick="navigate('create-po');closeSidebar()">
           <span class="icon">➕</span><span>สร้าง PO ใหม่</span>
         </button>
-        <button class="nav-item" data-view="item-master" onclick="navigate('item-master');closeSidebar()">
-          <span class="icon">🗂</span><span>Item Master</span>
-        </button>
-        <button class="nav-item" data-view="logistics-rates" onclick="navigate('logistics-rates');closeSidebar()">
-          <span class="icon">🚚</span><span>Logistics Rates</span>
-        </button>
+        <!-- Item Master & Logistics Rates moved to the project_dashboard Config page.
+             Item data for the PO picker still loads via GET /api/item-master. -->
         <button class="nav-item" data-view="production-order" onclick="navigate('production-order');closeSidebar()">
           <span class="icon">📦</span><span>สร้างใบสั่งผลิต</span>
         </button>
