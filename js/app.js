@@ -167,8 +167,7 @@ async function renderView(view) {
       case 'po-detail':  await renderPODetail(body, topbar); break;
       case 'wh-search':       await renderWHSearch(body, topbar); break;
       case 'wh-receive':      await renderWHReceive(body, topbar); break;
-      case 'item-master':     await renderItemMaster(body, topbar); break;
-      case 'logistics-rates': await renderLogisticsRates(body, topbar); break;
+      // item-master & logistics-rates admin views moved to project_dashboard Config.
       case 'production-order': await renderProductionOrder(body, topbar); break;
       case 'factory-users':    await renderFactoryUsers(body, topbar); break;
       case 'user-management':  await renderUserManagement(body, topbar); break;
