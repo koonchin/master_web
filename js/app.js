@@ -163,7 +163,7 @@ async function renderView(view) {
     switch (view) {
       case 'dashboard':  await renderDashboard(body, topbar); break;
       case 'po-list':    await renderPOList(body, topbar); break;
-      case 'create-po':  await renderCreatePO(body, topbar); break;
+      // create-po removed: POs auto-created from production orders (po-mirror).
       case 'po-detail':  await renderPODetail(body, topbar); break;
       case 'wh-search':       await renderWHSearch(body, topbar); break;
       case 'wh-receive':      await renderWHReceive(body, topbar); break;
@@ -230,7 +230,7 @@ function getFilterDate(po) {
 async function renderDashboard(body, topbar) {
   topbar.innerHTML = `
     <div class="topbar-left"><h2>📊 Dashboard</h2><p>ภาพรวม Supply Chain — วันที่ ${formatDate(today())}</p></div>
-    <div class="topbar-right"><button class="btn-primary" onclick="navigate('create-po')">＋ สร้าง PO ใหม่</button></div>`;
+    <div class="topbar-right"></div>`;
 
   const headers = await API.get('/po');
 
@@ -477,7 +477,7 @@ let _pendingPOFilter = ''; // set before navigating → picked up by renderPOLis
 async function renderPOList(body, topbar) {
   topbar.innerHTML = `
     <div class="topbar-left"><h2>📋 รายการ PO ทั้งหมด</h2><p>ติดตามสถานะใบสั่งซื้อทั้งหมด</p></div>
-    <div class="topbar-right"><button class="btn-primary" onclick="navigate('create-po')">＋ สร้าง PO ใหม่</button></div>`;
+    <div class="topbar-right"></div>`;
 
   _allPOHeaders = await API.get('/po');
 
@@ -2473,7 +2473,6 @@ function renderMobileNav() {
   const purchaseItems = [
     { view: 'dashboard', icon: '📊', label: 'Dashboard' },
     { view: 'po-list',   icon: '📋', label: 'รายการ PO', badge: true },
-    { view: 'create-po', icon: '➕', label: 'สร้าง PO' },
     { view: '__role__',  icon: '🏭', label: 'คลัง' },
   ];
   const warehouseItems = [
